@@ -1,600 +1,251 @@
-# SourceBlox — Complete Source SDK 2013 Roblox Port
+# Blox SDK 2013
 
-## Project Overview
+### Source SDK 2013 — Recreated for Roblox
 
-Build **SourceBlox**, a standalone recreation and port of Valve's public Source SDK 2013 architecture into Roblox using Luau.
+<p align="center">
+  A reusable Source-style game development and modding framework for Roblox, written in Luau.
+</p>
 
-The objective is to recreate the Source SDK as closely as technically possible, including its architecture, class hierarchy, interfaces, systems, networking, physics abstractions, rendering abstractions, game code and developer tools.
-
-SourceBlox is NOT a single Roblox game, a Half-Life recreation or a replacement for Roblox's underlying engine.
-
-It is an independent, reusable engine SDK that developers can install into any Roblox experience and use to build completely different games.
-
-**Primary reference repository:**
-https://github.com/ValveSoftware/source-sdk-2013
-
-**Target language:** Luau  
-**Target platform:** Roblox  
-**Engine architecture:** Shared / Server / Client  
-**Project name:** SourceBlox
+<p align="center">
+  <img src="https://img.shields.io/badge/Language-Luau-blue?style=for-the-badge" alt="Luau">
+  <img src="https://img.shields.io/badge/Platform-Roblox-red?style=for-the-badge" alt="Roblox">
+  <img src="https://img.shields.io/badge/Reference-Source%20SDK%202013-orange?style=for-the-badge" alt="Source SDK 2013">
+  <img src="https://img.shields.io/badge/Status-Planning-yellow?style=for-the-badge" alt="Planning">
+</p>
 
 ---
 
-# 1. Core Requirements
+## Overview
 
-- Recreate the public Source SDK 2013 architecture in Luau.
-- Maintain original Source class names and naming conventions wherever practical.
-- Recreate original interfaces, methods and lifecycle behaviour.
-- Maintain separate server-side, client-side and shared code.
-- Keep the engine independent of individual games.
-- Make the SDK portable between Roblox experiences.
-- Create a central engine bootstrap.
-- Provide a stable public API.
-- Support modular game extensions.
-- Include development and debugging tools.
-- Include automated tests.
-- Include external asset conversion tools.
-- Document every subsystem.
-- Maintain an SDK compatibility register.
+**Blox SDK 2013** is a project to recreate the publicly available game-development and modding framework of Valve's Source SDK 2013 inside Roblox using Luau.
 
-Roblox's underlying engine must remain untouched. SourceBlox recreates Source functionality through Roblox-compatible implementations and abstractions.
+The original Source SDK provides developers with the game code, classes, interfaces and tools needed to create and modify Source-based games. It operates on top of the Source Engine; it is not the complete Source Engine itself.
 
-# 2. Architecture
+Blox SDK 2013 follows the same concept.
 
-SourceBlox consists of four main components:
+Rather than rebuilding an entire engine, this project focuses on recreating the developer-facing framework, APIs, classes and gameplay systems that make up the public Source SDK, adapting them to Roblox.
 
-1. SourceShared — shared interfaces, definitions, utilities and mathematics.
-2. SourceServer — authoritative simulation, entities, physics, AI and game systems.
-3. SourceClient — client rendering, input, camera, HUD, prediction and audio.
-4. SourceTools — asset conversion, map importing, debugging and development utilities.
+The objective is to create a standalone, reusable SDK that developers can install into their Roblox experiences and build their own games on top of.
 
-Games must be separate projects that depend on SourceBlox.
+**One SDK. Multiple games. Shared framework.**
 
-The engine must never require a specific game to operate.
+## Project Goals
 
-# 3. Complete Repository Structure
-
-SourceBlox/
-│
-├── README.md
-├── LICENSE
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── .gitignore
-├── default.project.json
-│
-├── SourceSDK/
-│   │
-│   ├── Tier0/
-│   │   ├── Assertions/
-│   │   ├── Logging/
-│   │   ├── Debugging/
-│   │   ├── ErrorHandling/
-│   │   ├── Profiling/
-│   │   ├── Timing/
-│   │   ├── Memory/
-│   │   └── Platform/
-│   │
-│   ├── Tier1/
-│   │   ├── Containers/
-│   │   ├── Strings/
-│   │   ├── StringTables/
-│   │   ├── KeyValues/
-│   │   ├── Handles/
-│   │   ├── Serialization/
-│   │   ├── FileSystem/
-│   │   ├── Hashing/
-│   │   ├── BitBuffer/
-│   │   └── Utilities/
-│   │
-│   ├── MathLib/
-│   │   ├── Vector/
-│   │   ├── QAngle/
-│   │   ├── Quaternion/
-│   │   ├── Matrix/
-│   │   ├── Plane/
-│   │   ├── Ray/
-│   │   ├── Bounds/
-│   │   ├── Frustum/
-│   │   ├── Transform/
-│   │   └── Interpolation/
-│   │
-│   ├── Public/
-│   │   ├── Interfaces/
-│   │   ├── Engine/
-│   │   ├── Entities/
-│   │   ├── Physics/
-│   │   ├── Networking/
-│   │   ├── Rendering/
-│   │   ├── Materials/
-│   │   ├── Audio/
-│   │   ├── Models/
-│   │   ├── Animation/
-│   │   ├── Input/
-│   │   └── Game/
-│   │
-│   ├── Engine/
-│   │   ├── Bootstrap/
-│   │   ├── EngineLoop/
-│   │   ├── FrameScheduler/
-│   │   ├── EngineServices/
-│   │   ├── EngineInterfaces/
-│   │   ├── ResourceManager/
-│   │   ├── WorldManager/
-│   │   ├── Configuration/
-│   │   ├── Console/
-│   │   ├── Commands/
-│   │   ├── ConVars/
-│   │   └── Debug/
-│   │
-│   ├── EntitySystem/
-│   │   ├── BaseEntity/
-│   │   ├── BaseAnimating/
-│   │   ├── BaseFlex/
-│   │   ├── BaseCombatCharacter/
-│   │   ├── BasePlayer/
-│   │   ├── BaseNPC/
-│   │   ├── BaseTrigger/
-│   │   ├── BaseProp/
-│   │   ├── BaseWeapon/
-│   │   ├── EntityList/
-│   │   ├── EntityFactory/
-│   │   ├── EntityRegistry/
-│   │   ├── EntityHandles/
-│   │   ├── EntityNetworking/
-│   │   ├── EntityIO/
-│   │   ├── KeyValues/
-│   │   └── EntityComponents/
-│   │
-│   ├── Physics/
-│   │   ├── PhysicsEnvironment/
-│   │   ├── PhysicsObjects/
-│   │   ├── Collision/
-│   │   ├── CollisionGroups/
-│   │   ├── Trace/
-│   │   ├── TraceLine/
-│   │   ├── TraceHull/
-│   │   ├── Constraints/
-│   │   ├── SurfaceProperties/
-│   │   ├── Ragdolls/
-│   │   ├── Vehicles/
-│   │   └── PhysicsDebug/
-│   │
-│   ├── Networking/
-│   │   ├── NetChannels/
-│   │   ├── NetMessages/
-│   │   ├── NetworkVariables/
-│   │   ├── NetworkEntities/
-│   │   ├── Replication/
-│   │   ├── Snapshots/
-│   │   ├── Prediction/
-│   │   ├── Reconciliation/
-│   │   ├── Interpolation/
-│   │   ├── LagCompensation/
-│   │   └── NetworkUtilities/
-│   │
-│   ├── MaterialSystem/
-│   │   ├── Materials/
-│   │   ├── Textures/
-│   │   ├── Shaders/
-│   │   ├── SurfaceAppearance/
-│   │   ├── Decals/
-│   │   ├── Lighting/
-│   │   ├── Environment/
-│   │   └── MaterialUtilities/
-│   │
-│   ├── Rendering/
-│   │   ├── RenderManager/
-│   │   ├── ModelRenderer/
-│   │   ├── WorldRenderer/
-│   │   ├── ViewRenderer/
-│   │   ├── Visibility/
-│   │   ├── Particles/
-│   │   ├── Effects/
-│   │   ├── ViewModels/
-│   │   └── RenderUtilities/
-│   │
-│   ├── Audio/
-│   │   ├── SoundSystem/
-│   │   ├── SoundEmitters/
-│   │   ├── SoundChannels/
-│   │   ├── SoundEvents/
-│   │   ├── SoundScapes/
-│   │   ├── Attenuation/
-│   │   └── AudioUtilities/
-│   │
-│   ├── Animation/
-│   │   ├── AnimationState/
-│   │   ├── Activities/
-│   │   ├── Sequences/
-│   │   ├── Skeletons/
-│   │   ├── Attachments/
-│   │   ├── BoneControllers/
-│   │   ├── IK/
-│   │   └── AnimationUtilities/
-│   │
-│   ├── Input/
-│   │   ├── InputSystem/
-│   │   ├── Keyboard/
-│   │   ├── Mouse/
-│   │   ├── Gamepad/
-│   │   ├── Bindings/
-│   │   └── InputUtilities/
-│   │
-│   ├── GameSystem/
-│   │   ├── GameRules/
-│   │   ├── Player/
-│   │   ├── Weapons/
-│   │   ├── Damage/
-│   │   ├── NPC/
-│   │   ├── AI/
-│   │   ├── Navigation/
-│   │   ├── Vehicles/
-│   │   ├── Items/
-│   │   ├── Triggers/
-│   │   ├── Multiplayer/
-│   │   └── GameUtilities/
-│   │
-│   ├── VGUI/
-│   │   ├── Panels/
-│   │   ├── Controls/
-│   │   ├── Fonts/
-│   │   ├── Layout/
-│   │   ├── HUD/
-│   │   ├── Menus/
-│   │   └── UIUtilities/
-│   │
-│   └── Utilities/
-│       ├── ResourceUtilities/
-│       ├── Conversion/
-│       ├── WorldUtilities/
-│       └── Common/
-│
-├── GameCode/
-│   │
-│   ├── Shared/
-│   │   ├── Base/
-│   │   ├── Player/
-│   │   ├── Weapons/
-│   │   ├── NPC/
-│   │   ├── Items/
-│   │   ├── Damage/
-│   │   ├── GameRules/
-│   │   └── Definitions/
-│   │
-│   ├── Server/
-│   │   ├── Base/
-│   │   ├── Player/
-│   │   ├── Weapons/
-│   │   ├── NPC/
-│   │   ├── AI/
-│   │   ├── GameRules/
-│   │   ├── World/
-│   │   └── Multiplayer/
-│   │
-│   ├── Client/
-│   │   ├── Base/
-│   │   ├── Player/
-│   │   ├── Weapons/
-│   │   ├── ViewModels/
-│   │   ├── HUD/
-│   │   ├── Effects/
-│   │   ├── Camera/
-│   │   └── Prediction/
-│   │
-│   ├── HL2/
-│   │   ├── Shared/
-│   │   ├── Server/
-│   │   ├── Client/
-│   │   ├── NPC/
-│   │   ├── Weapons/
-│   │   ├── Entities/
-│   │   ├── GameRules/
-│   │   └── Definitions/
-│   │
-│   └── TF/
-│       ├── Shared/
-│       ├── Server/
-│       ├── Client/
-│       ├── Classes/
-│       ├── Weapons/
-│       ├── GameRules/
-│       └── Definitions/
-│
-├── RobloxPackage/
-│   │
-│   ├── ReplicatedStorage/
-│   │   └── SourceBlox/
-│   │       ├── Shared/
-│   │       ├── Public/
-│   │       ├── MathLib/
-│   │       ├── Tier0/
-│   │       ├── Tier1/
-│   │       ├── API/
-│   │       └── Resources/
-│   │
-│   ├── ServerScriptService/
-│   │   └── SourceBloxServer/
-│   │       ├── Bootstrap.server.lua
-│   │       ├── Engine/
-│   │       ├── Server/
-│   │       └── GameCode/
-│   │
-│   ├── StarterPlayer/
-│   │   └── StarterPlayerScripts/
-│   │       └── SourceBloxClient/
-│   │           ├── Bootstrap.client.lua
-│   │           ├── Engine/
-│   │           ├── Client/
-│   │           └── GameCode/
-│   │
-│   ├── ServerStorage/
-│   │   └── SourceBloxServerAssets/
-│   │
-│   └── StarterGui/
-│       └── SourceBloxUI/
-│
-├── Tools/
-│   │
-│   ├── AssetImporter/
-│   │   ├── VPK/
-│   │   ├── VTF/
-│   │   ├── VMT/
-│   │   ├── MDL/
-│   │   ├── VVD/
-│   │   ├── VTX/
-│   │   └── Export/
-│   │
-│   ├── BSPImporter/
-│   │   ├── Header/
-│   │   ├── Lumps/
-│   │   ├── Geometry/
-│   │   ├── Visibility/
-│   │   ├── Entities/
-│   │   └── Export/
-│   │
-│   ├── VMFImporter/
-│   ├── MaterialConverter/
-│   ├── ModelConverter/
-│   ├── AnimationConverter/
-│   ├── ModelViewer/
-│   ├── MaterialViewer/
-│   ├── EntityInspector/
-│   ├── Console/
-│   ├── Profiler/
-│   └── HammerEditor/
-│
-├── Tests/
-│   ├── Tier0/
-│   ├── Tier1/
-│   ├── MathLib/
-│   ├── Entities/
-│   ├── Physics/
-│   ├── Networking/
-│   ├── Rendering/
-│   ├── Audio/
-│   ├── Animation/
-│   ├── GameCode/
-│   ├── Server/
-│   ├── Client/
-│   └── Integration/
-│
-└── Documentation/
-    ├── Architecture/
-    ├── Installation/
-    ├── API/
-    ├── Server/
-    ├── Client/
-    ├── Shared/
-    ├── Entities/
-    ├── Physics/
-    ├── Networking/
-    ├── Rendering/
-    ├── Materials/
-    ├── GameCode/
-    ├── Compatibility/
-    └── Tutorials/
+- Recreate the public Source SDK 2013 game framework in Luau.
+- Preserve Source-style class names and programming conventions wherever practical.
+- Recreate important entity classes and their inheritance relationships.
+- Implement separate shared, server and client systems.
+- Provide reusable player, weapon, NPC and gameplay frameworks.
+- Recreate Source-style game rules, commands and configuration variables.
+- Provide Source-inspired networking and physics interfaces.
+- Support independent game projects and extensions.
+- Build tools for importing compatible Source assets.
+- Document compatibility and Roblox-specific limitations.
 
 ---
 
-# 4. Source SDK Subsystems to Port
+## Architecture
 
-## Tier0
+Blox SDK 2013 is divided into four main components.
 
-- Assertions
-- Logging
-- Debugging
-- Error handling
-- Profiling
-- Timing
-- Memory/resource tracking
-- Platform abstraction
+| Component | Responsibility |
+|---|---|
+| **Shared** | Common classes, interfaces, definitions and utilities |
+| **Server** | Authoritative gameplay, entities, damage, AI and game rules |
+| **Client** | Input, camera, HUD, effects, animations and presentation |
+| **Tools** | Asset conversion, map importing and developer utilities |
 
-## Tier1
+### Framework overview
 
-- Containers
-- Strings
-- String tables
-- KeyValues
-- Handles
-- Serialization
-- File system abstraction
-- Hashing
-- Bit buffers
-- Utility collections
+```text
+               YOUR ROBLOX GAME
+        ┌────────────────────────────┐
+        │                            │
+        │  Custom Game Rules          │
+        │  Weapons                   │
+        │  NPCs                      │
+        │  Entities                  │
+        │  Maps                      │
+        │  Game UI                   │
+        │  Custom Systems            │
+        │                            │
+        └──────────────┬─────────────┘
+                       │
+                 BLOX SDK 2013
+                       │
+        ┌──────────────┼─────────────┐
+        │              │             │
+      SHARED         SERVER        CLIENT
+        │              │             │
+      Classes       Game Logic     Input
+      Interfaces    Entities       Camera
+      Math          Weapons        HUD
+      Definitions   NPCs           Effects
+      Utilities     Damage         Animation
+      Config        Game Rules     Audio
+        │              │             │
+        └──────────────┴─────────────┘
+                       │
+                  ROBLOX ENGINE
+```
 
-## MathLib
+Roblox provides the underlying engine capabilities. Blox SDK 2013 provides the framework and developer-facing systems built on top of them.
 
-- Vector2
-- Vector3
-- Vector4
-- QAngle
-- Quaternion
-- Matrix3x4
-- Matrix4x4
-- Plane
-- Ray
-- Bounding boxes
-- Frustum
-- Transforms
-- Interpolation
+---
 
-## Engine
+## Core Systems
 
-- Engine initialization
-- Engine lifecycle
-- Frame loop
-- Tick management
-- Global engine state
-- Engine interfaces
-- Service registration
-- Resource manager
-- World management
-- ConVars
-- ConCommands
-- Console
-- Debug systems
+### Entity System
 
-## Entity System
+Recreate the Source entity architecture and its reusable base classes.
 
-- CBaseEntity
-- CBaseAnimating
-- CBaseFlex
-- CBaseCombatCharacter
-- CBasePlayer
-- CBaseNPC
-- CBaseTrigger
-- CBaseProp
-- CBaseCombatWeapon
-- Entity list
-- Entity factory
-- Entity registry
+Planned classes:
+
+| Source SDK class | Blox SDK equivalent |
+|---|---|
+| `CBaseEntity` | `BaseEntity` |
+| `CBaseAnimating` | `BaseAnimating` |
+| `CBaseFlex` | `BaseFlex` |
+| `CBaseCombatCharacter` | `BaseCombatCharacter` |
+| `CBasePlayer` | `BasePlayer` |
+| `CBaseNPC` | `BaseNPC` |
+| `CBaseTrigger` | `BaseTrigger` |
+| `CBaseProp` | `BaseProp` |
+| `CBaseCombatWeapon` | `BaseCombatWeapon` |
+
+Additional functionality:
+
+- Entity creation and removal
+- Entity registration and factories
 - Entity handles
-- Entity networking
+- Entity lifecycle
+- Entity parenting
 - Entity inputs and outputs
-- KeyValues
-- Parenting
-- Lifecycle
+- Entity networking
+- KeyValues support
 
-## Server
+### Player System
 
-- Game server
-- Server lifecycle
-- Server frames
-- Player management
-- Entity simulation
-- Server networking
-- Damage
-- Game rules
-- NPC simulation
-- World management
-- Physics authority
-- Multiplayer state
+- Player spawning and lifecycle
+- Player movement interfaces
+- Health and damage
+- Player states
+- Teams
+- Player animations
+- Player networking
+- Inventory management
 
-## Client
+### Weapon System
 
-- Client lifecycle
-- Client entities
-- Client frames
-- Client prediction
-- Interpolation
-- Camera
-- Input
-- HUD
-- Viewmodels
-- Console
-- Effects
-- Audio
-- Rendering abstractions
+- Base weapon class
+- Weapon registration
+- Primary and secondary attacks
+- Reloading
+- Ammunition
+- Weapon switching
+- Weapon animations
+- Damage handling
+- Client prediction interfaces
 
-## Physics
+### NPC and AI System
 
-- Physics environment
-- Rigid bodies
-- Collision shapes
-- Collision filtering
-- TraceLine
-- TraceHull
-- Constraints
+- Base NPC classes
+- NPC states
+- AI schedules and tasks
+- Navigation
+- Enemy detection
+- Relationships
+- Damage responses
+- NPC animations
+
+### Game Rules
+
+- Game mode registration
+- Round management
+- Team management
+- Spawn rules
+- Win conditions
+- Player limits
+- Damage rules
+- Multiplayer rules
+
+Games should define their own rules without modifying the SDK itself.
+
+### Physics and Collision
+
+Source-style interfaces implemented using Roblox physics.
+
 - Physics props
+- Collision groups
+- Collision filtering
+- `TraceLine`
+- `TraceHull`
 - Surface properties
-- Gravity
-- Ragdolls
-- Vehicles
-- Triggers
+- Gravity configuration
+- Constraints
+- Ragdoll abstractions
+- Trigger volumes
 
-## Networking
+### Networking
 
 - Network variables
-- Network entity handles
-- Replication
 - Network messages
+- Entity replication
 - Entity creation and removal
-- Prediction
-- Reconciliation
-- Interpolation
-- Snapshots
-- Network priorities
-- Lag compensation
 - State synchronization
+- Client prediction
+- Server reconciliation
+- Interpolation
+- Lag compensation abstractions
 
-## Material System and Rendering
+### Animation
 
-- Material definitions
-- Texture management
-- Shader configuration abstraction
-- SurfaceAppearance integration
-- Decals
-- Lighting
-- Environment
-- Model rendering
-- World rendering
-- View rendering
-- Visibility
-- Particles
-- Effects
-- Viewmodels
-
-## Audio
-
-- Sound emitters
-- Sound channels
-- Positional audio
-- Sound attenuation
-- Sound events
-- Soundscapes
-- Footsteps
-- Surface impact sounds
-
-## Animation
-
-- Animation state
+- Animation states
 - Activities
 - Sequences
 - Skeletons
 - Attachments
 - Bone controllers
-- Inverse kinematics
-- Animation utilities
+- Animation events
+- Inverse kinematics abstractions
 
-## Game Systems
+### Damage and Combat
 
-- Game rules
-- Player systems
-- Weapons
+- Damage information
 - Damage types
-- NPCs
-- AI schedules
-- AI tasks
-- Navigation
-- Vehicles
-- Items
-- Triggers
-- Multiplayer
+- Damage filters
+- Health systems
+- Hit detection
+- Weapon damage
+- NPC damage
+- Damage callbacks
+- Death handling
 
-## VGUI
+### Materials and Effects
 
-Recreate Source's UI architecture using Roblox-compatible UI components:
+- Material definitions
+- Surface properties
+- Texture configuration
+- Decals
+- Particles
+- Impact effects
+- Lighting configuration
+- Environmental effects
+
+### Audio
+
+- Sound emitters
+- Sound events
+- Sound channels
+- Positional audio
+- Attenuation
+- Soundscapes
+- Footsteps
+- Surface impact sounds
+
+### VGUI
+
+A Source-inspired UI framework using Roblox UI components.
 
 - Panels
 - Controls
@@ -602,348 +253,393 @@ Recreate Source's UI architecture using Roblox-compatible UI components:
 - Layout
 - HUD
 - Menus
-- UI utilities
+- UI events
+- Custom interface elements
+
+---
 
 ## Developer Tools
 
-- Developer console
-- ConVars
-- ConCommands
-- Entity inspector
-- Model viewer
-- Material viewer
-- Asset browser
-- Performance profiler
-- Debug overlays
-- Asset importer
-- Map converter
-- Hammer-inspired editor
+Planned development tools:
 
----
+| Tool | Purpose |
+|---|---|
+| Developer Console | Execute registered commands |
+| ConVars | Manage configuration variables |
+| ConCommands | Register developer commands |
+| Entity Inspector | Inspect registered entities |
+| Model Viewer | Preview converted models |
+| Material Viewer | Inspect material definitions |
+| Asset Importer | Convert Source assets |
+| Map Importer | Convert Source maps |
+| Profiler | Inspect framework performance |
+| Debug Overlays | Visualise framework systems |
 
-# 5. Game Code Compatibility
+### ConVars and ConCommands
 
-The SDK must account for the original public game-code branches.
+The SDK will provide Source-style configuration variables and developer commands.
 
-Analyse and map:
+Example planned API:
 
-- game/shared
-- game/server
-- game/client
-- game/shared/hl2
-- game/server/hl2
-- game/client/hl2
-- game/shared/tf
-- game/server/tf
-- game/client/tf
-
-Keep HL2 and TF game code separate from the core engine.
-
-Do not hardcode Half-Life 2 or TF2 functionality into SourceBlox's engine core.
-
-Create reusable game modules that extend the core SDK.
-
----
-
-# 6. Engine API
-
-SourceBlox should expose a central API.
-
-Example target interface:
-
-local SourceBlox = require(
-    game.ReplicatedStorage.SourceBlox
+```lua
+local BloxSDK = require(
+    game.ReplicatedStorage.BloxSDK
 )
 
-SourceBlox:Initialize({
-    GameName = "My Game",
-    Version = "0.1.0"
-})
+BloxSDK.convar.Create("sv_gravity", 196.2)
 
-local door = SourceBlox.ents.Create("prop_door")
-door:Spawn()
-
-SourceBlox.concommand.Add("test_command", function()
-    print("SourceBlox command executed")
+BloxSDK.concommand.Add("test_command", function()
+    print("Blox SDK command executed")
 end)
-
-SourceBlox.convar.Create("sv_gravity", 196.2)
-
-The API should eventually expose Source-style namespaces:
-
-- engine
-- game
-- ents
-- util
-- physenv
-- player
-- weapons
-- npc
-- surface
-- sound
-- render
-- input
-- concommand
-- convar
-- networking
-- materials
-
-These must be implemented as SourceBlox APIs, not assumed to exist in Roblox.
+```
 
 ---
 
-# 7. Server and Client Architecture
+## Public API
 
-Server responsibilities:
+Planned Source-style namespaces:
 
-- Authoritative entity simulation
-- Entity spawning and removal
-- Physics decisions
+| Namespace | Purpose |
+|---|---|
+| `engine` | SDK lifecycle and services |
+| `game` | Game rules and game state |
+| `ents` | Entity creation and management |
+| `util` | Shared utilities |
+| `physenv` | Physics interfaces |
+| `player` | Player systems |
+| `weapons` | Weapon registration |
+| `npc` | NPC and AI systems |
+| `surface` | Surface properties |
+| `sound` | Audio systems |
+| `render` | Rendering abstractions |
+| `input` | Input handling |
+| `concommand` | Developer commands |
+| `convar` | Configuration variables |
+| `networking` | Networking interfaces |
+| `materials` | Material definitions |
+
+These are planned Blox SDK APIs, not existing Roblox APIs.
+
+---
+
+## Server, Client and Shared
+
+The framework will be separated according to Roblox's runtime architecture.
+
+### Shared — `ReplicatedStorage`
+
+- Base class definitions
+- Interfaces
+- Mathematics
+- Entity definitions
+- Network schemas
+- Configuration
+- Common utilities
+- Shared gameplay logic
+
+### Server — `ServerScriptService`
+
+- Entity authority
+- Player management
 - NPC AI
-- Damage
+- Damage processing
 - Weapon validation
 - Game rules
-- Networking
-- World state
-- Server console
-- Multiplayer authority
+- Physics decisions
+- Server networking
+- Multiplayer state
 
-Client responsibilities:
+### Client — `StarterPlayerScripts`
 
-- Rendering
-- Input
+- Input handling
 - Camera
-- Viewmodels
 - HUD
+- Viewmodels
 - Client effects
 - Audio playback
 - Client prediction
 - Interpolation
-- Client entities
-- Client console
+- Client-side presentation
 
-Shared responsibilities:
-
-- Math
-- Definitions
-- Interfaces
-- Entity metadata
-- Network schemas
-- Configuration
-- Shared game logic
-- Common utilities
-
-Use Roblox RemoteEvents, RemoteFunctions and replication where appropriate, behind SourceBlox networking interfaces.
-
-Never trust client-side gameplay decisions.
+Server-only gameplay logic must remain authoritative. Clients must not be trusted to decide important gameplay outcomes.
 
 ---
 
-# 8. External Conversion Tools
+## Repository Structure
 
-Create desktop tools to process Source asset formats that Roblox scripts cannot directly read from the local filesystem.
+```text
+blox-sdk-2013/
+│
+├── README.md
+├── LICENSE
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+│
+├── SourceSDK/
+│   ├── Public/
+│   │   ├── Interfaces/
+│   │   ├── Entities/
+│   │   ├── Player/
+│   │   ├── Weapons/
+│   │   ├── NPC/
+│   │   ├── Physics/
+│   │   ├── Networking/
+│   │   └── Game/
+│   │
+│   ├── Shared/
+│   │   ├── MathLib/
+│   │   ├── Utilities/
+│   │   ├── KeyValues/
+│   │   ├── Definitions/
+│   │   ├── Materials/
+│   │   └── Animation/
+│   │
+│   ├── Server/
+│   │   ├── Entities/
+│   │   ├── Player/
+│   │   ├── Weapons/
+│   │   ├── NPC/
+│   │   ├── AI/
+│   │   ├── GameRules/
+│   │   ├── Damage/
+│   │   └── Multiplayer/
+│   │
+│   ├── Client/
+│   │   ├── Entities/
+│   │   ├── Player/
+│   │   ├── Input/
+│   │   ├── Camera/
+│   │   ├── HUD/
+│   │   ├── ViewModels/
+│   │   ├── Effects/
+│   │   └── Prediction/
+│   │
+│   ├── GameSystems/
+│   │   ├── Items/
+│   │   ├── Triggers/
+│   │   ├── Vehicles/
+│   │   ├── Combat/
+│   │   └── Multiplayer/
+│   │
+│   └── VGUI/
+│       ├── Panels/
+│       ├── Controls/
+│       ├── Layout/
+│       ├── HUD/
+│       └── Menus/
+│
+├── GameCode/
+│   ├── Shared/
+│   ├── Server/
+│   ├── Client/
+│   ├── HL2/
+│   └── TF/
+│
+├── RobloxPackage/
+│   ├── ReplicatedStorage/
+│   │   └── BloxSDK/
+│   ├── ServerScriptService/
+│   │   └── BloxSDKServer/
+│   ├── StarterPlayer/
+│   │   └── StarterPlayerScripts/
+│   │       └── BloxSDKClient/
+│   ├── ServerStorage/
+│   │   └── BloxSDKAssets/
+│   └── StarterGui/
+│       └── BloxSDKUI/
+│
+├── Tools/
+│   ├── AssetImporter/
+│   ├── BSPImporter/
+│   ├── VMFImporter/
+│   ├── MaterialConverter/
+│   ├── ModelConverter/
+│   ├── AnimationConverter/
+│   ├── ModelViewer/
+│   ├── MaterialViewer/
+│   ├── EntityInspector/
+│   └── Profiler/
+│
+├── Tests/
+│   ├── Entities/
+│   ├── Player/
+│   ├── Weapons/
+│   ├── NPC/
+│   ├── Physics/
+│   ├── Networking/
+│   ├── GameSystems/
+│   └── Integration/
+│
+└── Documentation/
+    ├── Architecture/
+    ├── Installation/
+    ├── API/
+    ├── Entities/
+    ├── Player/
+    ├── Weapons/
+    ├── NPC/
+    ├── Networking/
+    ├── GameSystems/
+    ├── Compatibility/
+    └── Tutorials/
+```
 
-Support:
+---
 
-- VPK
-- VTF
-- VMT
-- MDL
-- VVD
-- VTX
-- BSP
-- VMF
-- WAV
-- PCF
-- ANI
+## Source SDK 2013 Reference
 
-Create dedicated readers, parsers, converters and exporters.
+The official Source SDK 2013 repository is the primary technical reference.
 
-The asset pipeline should:
+**Original repository:**  
+https://github.com/ValveSoftware/source-sdk-2013
+
+Important areas to analyse:
+
+```text
+game/
+├── shared/
+├── server/
+├── client/
+│
+├── shared/
+│   ├── hl2/
+│   └── tf/
+│
+├── server/
+│   ├── hl2/
+│   └── tf/
+│
+└── client/
+    ├── hl2/
+    └── tf/
+```
+
+The actual repository structure, classes, dependencies and available implementations will determine what can be ported.
+
+HL2 and TF game code should remain separate from the reusable framework.
+
+---
+
+## Asset and Map Importing
+
+External desktop tools will eventually support importing compatible Source game resources into Roblox.
+
+Planned formats:
+
+| Format | Purpose |
+|---|---|
+| `.VPK` | Source archive files |
+| `.VTF` | Texture files |
+| `.VMT` | Material definitions |
+| `.MDL` | Model files |
+| `.VVD` | Vertex data |
+| `.VTX` | Model data |
+| `.BSP` | Compiled maps |
+| `.VMF` | Hammer map source |
+| `.WAV` | Audio |
+| `.PCF` | Particle definitions |
+| `.ANI` | Animation data |
+
+The intended workflow:
 
 1. Read original Source files.
-2. Extract their data.
-3. Parse geometry and metadata.
-4. Convert textures and materials.
-5. Convert models and animations where possible.
-6. Generate Roblox-compatible output.
-7. Produce import manifests.
-8. Allow importing into Studio.
+2. Extract relevant resources.
+3. Parse geometry, materials and metadata.
+4. Convert supported formats.
+5. Generate Roblox-compatible output.
+6. Produce import manifests.
+7. Import resources into Studio.
 
-Use Python initially, with C++ for performance-critical conversion tools where appropriate.
-
----
-
-# 9. Testing
-
-Every subsystem must have automated tests.
-
-Create tests for:
-
-- Tier0
-- Tier1
-- MathLib
-- Engine lifecycle
-- Entity lifecycle
-- Entity inheritance
-- Physics
-- Collision
-- TraceLine
-- TraceHull
-- Networking
-- Prediction
-- Replication
-- Rendering
-- Materials
-- Audio
-- Animation
-- Game code
-- Server
-- Client
-- Integration
-
-Include multiplayer tests with multiple simulated clients wherever Roblox testing facilities allow.
+Not every Source format or feature will have a direct Roblox equivalent.
 
 ---
 
-# 10. Porting Workflow
+## Development Roadmap
 
-Do not randomly create scripts or implement systems without studying the original SDK.
+| Phase | Task | Status |
+|---|---|---|
+| 01 | Analyse Source SDK 2013 | `NOT_STARTED` |
+| 02 | Repository and dependency inventory | `NOT_STARTED` |
+| 03 | Shared utilities and MathLib | `NOT_STARTED` |
+| 04 | Base entity framework | `NOT_STARTED` |
+| 05 | Entity registration and lifecycle | `NOT_STARTED` |
+| 06 | Player framework | `NOT_STARTED` |
+| 07 | Weapon framework | `NOT_STARTED` |
+| 08 | Damage and combat systems | `NOT_STARTED` |
+| 09 | NPC and AI framework | `NOT_STARTED` |
+| 10 | Game rules | `NOT_STARTED` |
+| 11 | Server/client architecture | `NOT_STARTED` |
+| 12 | Networking | `NOT_STARTED` |
+| 13 | Physics interfaces | `NOT_STARTED` |
+| 14 | Animation systems | `NOT_STARTED` |
+| 15 | Materials and effects | `NOT_STARTED` |
+| 16 | Audio systems | `NOT_STARTED` |
+| 17 | VGUI recreation | `NOT_STARTED` |
+| 18 | HL2 game-code compatibility | `NOT_STARTED` |
+| 19 | TF game-code compatibility | `NOT_STARTED` |
+| 20 | Asset and map importers | `NOT_STARTED` |
+| 21 | Testing and compatibility | `NOT_STARTED` |
+| 22 | Packaging and release | `NOT_STARTED` |
 
-For every subsystem:
+### Compatibility Statuses
 
-1. Locate its original source files.
-2. Read the C++ headers and implementations.
-3. Identify classes, methods and interfaces.
-4. Identify dependencies.
-5. Document the original behaviour.
-6. Design its Luau interface.
-7. Implement the Roblox-compatible backend.
-8. Create unit tests.
-9. Test server/client behaviour.
-10. Update compatibility documentation.
+Every system will use one of these statuses:
 
-Maintain a porting status:
+- `NOT_STARTED`
+- `ANALYSED`
+- `PORTING`
+- `IMPLEMENTED`
+- `TESTING`
+- `COMPATIBLE`
+- `LIMITED`
+- `UNSUPPORTED`
 
-- NOT_STARTED
-- ANALYSED
-- PORTING
-- IMPLEMENTED
-- TESTING
-- COMPATIBLE
-- LIMITED
-- UNSUPPORTED
-
-Every limitation must be documented.
-
-Do not mark a subsystem compatible simply because a basic version exists.
-
----
-
-# 11. Development Milestones
-
-Phase 1: Repository analysis and inventory.
-
-Phase 2: Tier0.
-
-Phase 3: Tier1.
-
-Phase 4: MathLib.
-
-Phase 5: Public interfaces.
-
-Phase 6: Engine core.
-
-Phase 7: Entity system.
-
-Phase 8: Server runtime.
-
-Phase 9: Client runtime.
-
-Phase 10: Networking and prediction.
-
-Phase 11: Physics.
-
-Phase 12: Material system.
-
-Phase 13: Rendering.
-
-Phase 14: Audio.
-
-Phase 15: Animation.
-
-Phase 16: Shared game systems.
-
-Phase 17: HL2 game code.
-
-Phase 18: TF2 game code.
-
-Phase 19: World and map loading.
-
-Phase 20: Developer tools.
-
-Phase 21: Compatibility testing.
-
-Phase 22: Packaging and release.
+A system will not be marked compatible simply because a basic implementation exists.
 
 ---
 
-# 12. Important Technical Limitations
+## Technical Limitations
 
-SourceBlox must reproduce Source behaviour through Roblox-compatible implementations.
+Blox SDK 2013 runs inside Roblox, so it cannot directly reproduce every Source Engine feature.
 
-It cannot replace Roblox's native renderer, physics engine, networking runtime or execution environment.
+The project will:
 
-Where Roblox has no equivalent, create an abstraction or approximation and document it.
+- Use Roblox physics with Source-style interfaces.
+- Use Roblox networking with Source-inspired replication patterns.
+- Use Roblox rendering with custom material and visual systems.
+- Use Luau instead of the original native C++ runtime.
+- Use desktop tools for filesystem access and binary asset conversion.
+- Document all approximations and unsupported functionality.
 
-Do not pretend unsupported functionality is 1:1.
-
-The original SDK is game code built against the Source runtime, not the complete proprietary Source Engine. Treat the public repository as the primary reference for its actual available classes and implementations.
-
-External asset conversion and filesystem operations must happen in desktop tools rather than ordinary Roblox game scripts.
-
-Respect Valve's SDK licence, third-party licences and asset redistribution restrictions.
+The objective is to recreate the **public Source SDK development framework**, not the complete Source Engine.
 
 ---
 
-# 13. Final Objective
+## Licensing and Attribution
 
-The finished product must be a standalone, reusable Source SDK 2013-inspired Roblox engine port called SourceBlox.
+This project uses Valve's public Source SDK 2013 repository as its primary technical reference.
 
-A developer should be able to:
+- [Valve Source SDK 2013](https://github.com/ValveSoftware/source-sdk-2013)
+- [Source SDK 2013 Licence](https://github.com/ValveSoftware/source-sdk-2013/blob/master/LICENSE)
 
-1. Download SourceBlox.
-2. Install the shared package.
-3. Install the server package.
-4. Install the client package.
-5. Initialise the engine.
-6. Create a separate game project.
-7. Register custom entities.
-8. Create custom weapons and NPCs.
-9. Use Source-style APIs.
-10. Build multiplayer games.
-11. Use engine development tools.
-12. Reuse the same SDK in other Roblox experiences.
+All applicable licence conditions and third-party notices must be respected.
 
-**The engine must be independent of its games.**
+Proprietary Valve game assets must not be redistributed without permission. Adapted source code and independently written Luau implementations should be clearly distinguished.
 
-The end goal is not a Half-Life game. It is SourceBlox: a reusable recreation of the public Source SDK 2013 architecture, systems and developer experience inside Roblox.
+---
 
-# FIRST TASK
+## Project Status
 
-Before implementing anything, analyse the complete official Source SDK 2013 GitHub repository.
+<sub>Current stage: Planning and architecture.</sub>
 
-Produce:
+The first milestone is to analyse the original Source SDK 2013 repository and document its actual classes, interfaces, dependencies and game systems.
 
-1. A complete repository directory inventory.
-2. A subsystem inventory.
-3. A class and interface inventory.
-4. A dependency map.
-5. A server/shared/client classification.
-6. A Luau porting map.
-7. A compatibility register.
-8. A list of systems that cannot be directly reproduced in Roblox.
+Implementation will begin after the initial porting specification has been established.
 
-Use the results to establish the actual SourceBlox development specification.
+---
 
-Do not start by generating hundreds of empty scripts. Understand the original SDK first, then port it subsystem by subsystem.
+<p align="center">
+  <strong>Blox SDK 2013</strong>
+  <br>
+  <sub>Bringing the Source SDK development experience to Roblox.</sub>
+</p>
