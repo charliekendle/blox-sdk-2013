@@ -557,7 +557,30 @@ setBind("`", "toggleconsole")
 setBind("v", "noclip")
 setBind("m", "toggle cl_mouselock")
 
+-- The console key is checked by physical key AND by the character it types, so it
+-- works on UK/ISO layouts, and it ignores gameProcessed so CoreGui can't swallow it.
+local CONSOLE_CHARS = { ["`"] = true, ["¬"] = true, ["¦"] = true }
+
+local function isConsoleKey(io: InputObject): boolean
+	if io.KeyCode == Enum.KeyCode.Backquote or io.KeyCode == Enum.KeyCode.F2 then
+		return true
+	end
+	if io.KeyCode == Enum.KeyCode.Unknown then
+		return false
+	end
+	local ok, char = pcall(UserInputService.GetStringForKeyCode, UserInputService, io.KeyCode)
+	return ok and CONSOLE_CHARS[char] == true
+end
+
 UserInputService.InputBegan:Connect(function(io, gameProcessed)
+	if io.UserInputType == Enum.UserInputType.Keyboard and isConsoleKey(io) then
+		local focused = UserInputService:GetFocusedTextBox()
+		if focused == nil or focused == input then
+			setVisible(not gui.Enabled)
+			return
+		end
+	end
+
 	local key = keyNameFromInput(io)
 	if not key then
 		return
@@ -668,3 +691,4 @@ Cvar.ConCommand("key_listboundkeys", function()
 end, "List bound keys with bindings.")
 
 Cvar.Msg("BloxSDK console. Type 'cvarlist' or 'find <text>' to see what's available.")
+print("[BloxSDK] DevConsole loaded - press ` or F2")
