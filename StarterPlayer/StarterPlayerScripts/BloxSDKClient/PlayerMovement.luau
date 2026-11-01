@@ -12,8 +12,14 @@
 	  Ctrl / C    duck (noclip: down)
 	  Shift       sprint (+speed, 320)
 	  Alt         walk (+walk, 150)
-	  V           toggle noclip
-	  M           toggle mouse lock
+	  `           console (DevConsole) - V/M are console binds: noclip, toggle cl_mouselock
+
+	Console:
+	  convars  sensitivity, m_yaw, m_pitch, fov_desired, cl_forwardspeed, cl_sidespeed, cl_upspeed,
+	           hl2_normspeed, hl2_sprintspeed, hl2_walkspeed, smoothstairs, sv_falldamage,
+	           cl_mouselock, cl_drawhud, cl_showspeed, cl_showpos, cl_showfps
+	  commands noclip, kill, getpos, setpos, setang
+	  Positions are Source units on Roblox axes (Y up).
 ]]
 
 local Players = game:GetService("Players")
@@ -22,7 +28,9 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local GameMovement = require(ReplicatedStorage:WaitForChild("BloxSDK"):WaitForChild("Shared"):WaitForChild("GameMovement"))
+local Shared = ReplicatedStorage:WaitForChild("BloxSDK"):WaitForChild("Shared")
+local Cvar = require(Shared:WaitForChild("ConVar"))
+local GameMovement = require(Shared:WaitForChild("GameMovement"))
 local ConVars = GameMovement.ConVars
 
 local player = Players.LocalPlayer
@@ -31,41 +39,36 @@ local TICK_INTERVAL = 0.015 -- Source default 66.67 tick
 local MAX_TICKS_PER_FRAME = 8
 local RENDER_STEP_NAME = "BloxSDK_PlayerMovement"
 
-local cl = {
-	sensitivity = 3,
-	m_yaw = 0.022,
-	m_pitch = 0.022,
-	forwardspeed = 450,
-	sidespeed = 450,
-	upspeed = 320,
-	fov = 90, -- horizontal FOV at 4:3, like Source's fov_desired
-	normspeed = 190, -- hl2_normspeed
-	sprintspeed = 320, -- hl2_sprintspeed
-	walkspeed = 150, -- hl2_walkspeed
-	smoothstairs = true,
-	falldamage = true,
-	showhud = true,
-}
+------------------------------------------------------------------------
+-- ConVars
+------------------------------------------------------------------------
 
-local Binds = {
-	forward = { Enum.KeyCode.W },
-	back = { Enum.KeyCode.S },
-	moveleft = { Enum.KeyCode.A },
-	moveright = { Enum.KeyCode.D },
-	jump = { Enum.KeyCode.Space },
-	duck = { Enum.KeyCode.LeftControl, Enum.KeyCode.C },
-	speed = { Enum.KeyCode.LeftShift },
-	walk = { Enum.KeyCode.LeftAlt },
-	noclip = Enum.KeyCode.V,
-	togglemouse = Enum.KeyCode.M,
-}
+local ARCHIVE = Cvar.FCVAR_ARCHIVE
+local CHEAT = Cvar.FCVAR_CHEAT
+
+local sensitivity = Cvar.ConVar("sensitivity", 3, ARCHIVE, "Mouse sensitivity.", 0.0001, 10000)
+local m_yaw = Cvar.ConVar("m_yaw", 0.022, ARCHIVE, "Mouse yaw factor.")
+local m_pitch = Cvar.ConVar("m_pitch", 0.022, ARCHIVE, "Mouse pitch factor.")
+local fov_desired = Cvar.ConVar("fov_desired", 90, ARCHIVE, "Sets the base field-of-view (horizontal, 4:3).", 20, 130)
+local cl_forwardspeed = Cvar.ConVar("cl_forwardspeed", 450, CHEAT, "")
+local cl_sidespeed = Cvar.ConVar("cl_sidespeed", 450, CHEAT, "")
+local cl_upspeed = Cvar.ConVar("cl_upspeed", 320, CHEAT, "")
+local hl2_normspeed = Cvar.ConVar("hl2_normspeed", 190, 0, "Normal run speed.")
+local hl2_sprintspeed = Cvar.ConVar("hl2_sprintspeed", 320, 0, "Sprint speed.")
+local hl2_walkspeed = Cvar.ConVar("hl2_walkspeed", 150, 0, "Walk speed.")
+local smoothstairs = Cvar.ConVar("smoothstairs", 1, 0, "Smooth player eye z coordinate when traversing stairs.", 0, 1)
+local sv_falldamage = Cvar.ConVar("sv_falldamage", 1, Cvar.FCVAR_NOTIFY, "Apply HL2 fall damage.", 0, 1)
+local cl_mouselock = Cvar.ConVar("cl_mouselock", 1, 0, "Lock the mouse to the centre for mouse look.", 0, 1)
+local cl_drawhud = Cvar.ConVar("cl_drawhud", 1, CHEAT, "Enable the rendering of the hud.", 0, 1)
+local cl_showspeed = Cvar.ConVar("cl_showspeed", 1, 0, "Show horizontal speed meter.", 0, 1)
+local cl_showpos = Cvar.ConVar("cl_showpos", 0, 0, "Draw current position at top of screen.", 0, 2)
+local cl_showfps = Cvar.ConVar("cl_showfps", 0, 0, "Draw fps meter at top of screen.", 0, 1)
 
 ------------------------------------------------------------------------
 -- State
 ------------------------------------------------------------------------
 
 local movement = nil
-local character: Model? = nil
 local humanoid: Humanoid? = nil
 local root: BasePart? = nil
 local rootOffsetStuds = 3
@@ -77,11 +80,20 @@ local accumulator = 0
 local prevOrigin, currOrigin = Vector3.zero, Vector3.zero
 local prevView, currView = GameMovement.VEC_VIEW, GameMovement.VEC_VIEW
 local jumpQueued = false
-local mouseLocked = true
 local punchPitch = 0
+local fpsSmoothed = 60
 
 local smoothZ = 0
 local smoothViewOffset = GameMovement.VEC_VIEW
+
+local KEYS_FORWARD = { Enum.KeyCode.W }
+local KEYS_BACK = { Enum.KeyCode.S }
+local KEYS_LEFT = { Enum.KeyCode.A }
+local KEYS_RIGHT = { Enum.KeyCode.D }
+local KEYS_JUMP = { Enum.KeyCode.Space }
+local KEYS_DUCK = { Enum.KeyCode.LeftControl, Enum.KeyCode.C }
+local KEYS_SPEED = { Enum.KeyCode.LeftShift }
+local KEYS_WALK = { Enum.KeyCode.LeftAlt }
 
 ------------------------------------------------------------------------
 -- HUD
@@ -93,29 +105,51 @@ hud.ResetOnSpawn = false
 hud.IgnoreGuiInset = true
 hud.DisplayOrder = 10
 
-local speedLabel = Instance.new("TextLabel")
-speedLabel.AnchorPoint = Vector2.new(0.5, 1)
-speedLabel.Position = UDim2.new(0.5, 0, 1, -64)
-speedLabel.Size = UDim2.fromOffset(300, 28)
-speedLabel.BackgroundTransparency = 1
-speedLabel.Font = Enum.Font.Code
-speedLabel.TextSize = 24
-speedLabel.TextColor3 = Color3.new(1, 1, 1)
-speedLabel.TextStrokeTransparency = 0.4
-speedLabel.Text = ""
-speedLabel.Parent = hud
+local function makeLabel(props: { [string]: any }): TextLabel
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.Code
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0.4
+	label.Text = ""
+	for k, v in props do
+		(label :: any)[k] = v
+	end
+	label.Parent = hud
+	return label
+end
 
-local infoLabel = Instance.new("TextLabel")
-infoLabel.AnchorPoint = Vector2.new(0.5, 1)
-infoLabel.Position = UDim2.new(0.5, 0, 1, -40)
-infoLabel.Size = UDim2.fromOffset(500, 20)
-infoLabel.BackgroundTransparency = 1
-infoLabel.Font = Enum.Font.Code
-infoLabel.TextSize = 16
-infoLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-infoLabel.TextStrokeTransparency = 0.5
-infoLabel.Text = ""
-infoLabel.Parent = hud
+local speedLabel = makeLabel({
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -64),
+	Size = UDim2.fromOffset(300, 28),
+	TextSize = 24,
+})
+
+local infoLabel = makeLabel({
+	AnchorPoint = Vector2.new(0.5, 1),
+	Position = UDim2.new(0.5, 0, 1, -40),
+	Size = UDim2.fromOffset(500, 20),
+	TextSize = 16,
+	TextColor3 = Color3.fromRGB(200, 200, 200),
+})
+
+local posLabel = makeLabel({
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -12, 0, 40),
+	Size = UDim2.fromOffset(420, 80),
+	TextSize = 16,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Top,
+})
+
+local fpsLabel = makeLabel({
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -12, 0, 16),
+	Size = UDim2.fromOffset(200, 20),
+	TextSize = 16,
+	TextXAlignment = Enum.TextXAlignment.Right,
+})
 
 local crosshair = Instance.new("Frame")
 crosshair.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -138,6 +172,10 @@ local function isDown(keys: { Enum.KeyCode }): boolean
 		end
 	end
 	return false
+end
+
+local function inputBlocked(): boolean
+	return Cvar.consoleVisible or UserInputService:GetFocusedTextBox() ~= nil
 end
 
 local function getControls()
@@ -175,32 +213,46 @@ local function cacheHiddenParts(char: Model)
 	end
 end
 
+local function snapInterpolation()
+	if not movement then
+		return
+	end
+	prevOrigin, currOrigin = movement.origin, movement.origin
+	prevView, currView = movement.viewOffset, movement.viewOffset
+	smoothZ = movement.origin.Y
+	smoothViewOffset = movement.viewOffset
+	accumulator = 0
+end
+
 local function buildCmd()
 	local f, s, u = 0, 0, 0
-	local typing = UserInputService:GetFocusedTextBox() ~= nil
+	local blocked = inputBlocked()
 	local noclip = movement and movement.noclip
 
-	if not typing then
-		if isDown(Binds.forward) then f += cl.forwardspeed end
-		if isDown(Binds.back) then f -= cl.forwardspeed end
-		if isDown(Binds.moveright) then s += cl.sidespeed end
-		if isDown(Binds.moveleft) then s -= cl.sidespeed end
+	if not blocked then
+		if isDown(KEYS_FORWARD) then f += cl_forwardspeed:GetFloat() end
+		if isDown(KEYS_BACK) then f -= cl_forwardspeed:GetFloat() end
+		if isDown(KEYS_RIGHT) then s += cl_sidespeed:GetFloat() end
+		if isDown(KEYS_LEFT) then s -= cl_sidespeed:GetFloat() end
 		if noclip then
-			if isDown(Binds.jump) then u += cl.upspeed end
-			if isDown(Binds.duck) then u -= cl.upspeed end
+			if isDown(KEYS_JUMP) then u += cl_upspeed:GetFloat() end
+			if isDown(KEYS_DUCK) then u -= cl_upspeed:GetFloat() end
 		end
 	end
 
-	local sprint = not typing and isDown(Binds.speed)
-	local walk = not typing and isDown(Binds.walk)
-	local maxspeed = if sprint then cl.sprintspeed elseif walk then cl.walkspeed else cl.normspeed
+	local sprint = not blocked and isDown(KEYS_SPEED)
+	local walk = not blocked and isDown(KEYS_WALK)
+	local maxspeed = if sprint
+		then hl2_sprintspeed:GetFloat()
+		elseif walk then hl2_walkspeed:GetFloat()
+		else hl2_normspeed:GetFloat()
 
 	local cmd = {
 		forwardmove = f,
 		sidemove = s,
 		upmove = u,
-		jump = not typing and not noclip and (jumpQueued or isDown(Binds.jump)),
-		duck = not typing and not noclip and isDown(Binds.duck),
+		jump = not blocked and not noclip and (jumpQueued or isDown(KEYS_JUMP)),
+		duck = not blocked and not noclip and isDown(KEYS_DUCK),
 		sprint = sprint,
 		maxspeed = maxspeed,
 		pitch = pitch,
@@ -235,6 +287,48 @@ local function runTick()
 	end
 end
 
+local function updateHud(dt: number)
+	local drawHud = cl_drawhud:GetBool()
+	hud.Enabled = drawHud
+	if not drawHud then
+		return
+	end
+
+	local v = movement.velocity
+	local showSpeed = cl_showspeed:GetBool()
+	speedLabel.Visible = showSpeed
+	infoLabel.Visible = showSpeed
+	if showSpeed then
+		speedLabel.Text = string.format("%d u/s", math.floor(math.sqrt(v.X * v.X + v.Z * v.Z) + 0.5))
+		infoLabel.Text = string.format(
+			"%s  %s  vz %d",
+			if movement.noclip then "NOCLIP" elseif movement.onGround then "GROUND" else "AIR",
+			if movement.ducked then "DUCKED" elseif movement.duckAmount > 0 then "DUCKING" else "STAND",
+			math.floor(v.Y + 0.5)
+		)
+	end
+
+	local showPos = cl_showpos:GetInt()
+	posLabel.Visible = showPos ~= 0
+	if showPos ~= 0 then
+		local o = if showPos == 2 then movement.origin + Vector3.new(0, movement.viewOffset, 0) else movement.origin
+		posLabel.Text = string.format(
+			"name: %s\npos:  %.2f %.2f %.2f\nang:  %.2f %.2f %.2f\nvel:  %.2f",
+			player.Name,
+			o.X, o.Y, o.Z,
+			pitch, yaw, 0,
+			v.Magnitude
+		)
+	end
+
+	local showFps = cl_showfps:GetBool()
+	fpsLabel.Visible = showFps
+	if showFps then
+		fpsSmoothed += ((1 / math.max(dt, 1e-4)) - fpsSmoothed) * 0.1
+		fpsLabel.Text = string.format("%d fps", math.floor(fpsSmoothed + 0.5))
+	end
+end
+
 local function render(dt: number)
 	if not movement or not root then
 		return
@@ -244,12 +338,13 @@ local function render(dt: number)
 	local camera = Workspace.CurrentCamera
 
 	-- mouse look
-	if mouseLocked then
+	if cl_mouselock:GetBool() and not inputBlocked() then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 		UserInputService.MouseIconEnabled = false
 		local delta = UserInputService:GetMouseDelta()
-		yaw -= delta.X * cl.sensitivity * cl.m_yaw
-		pitch = math.clamp(pitch - delta.Y * cl.sensitivity * cl.m_pitch, -89, 89)
+		local sens = sensitivity:GetFloat()
+		yaw -= delta.X * sens * m_yaw:GetFloat()
+		pitch = math.clamp(pitch - delta.Y * sens * m_pitch:GetFloat(), -89, 89)
 	else
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 		UserInputService.MouseIconEnabled = true
@@ -273,7 +368,7 @@ local function render(dt: number)
 	-- C_BasePlayer::SmoothViewOnStairs
 	local z = origin.Y
 	local groundStatic = movement.platformVelocity.Magnitude < 1
-	if cl.smoothstairs and movement.onGround and groundStatic and z ~= smoothZ and viewOffset == smoothViewOffset then
+	if smoothstairs:GetBool() and movement.onGround and groundStatic and z ~= smoothZ and viewOffset == smoothViewOffset then
 		local dir = if z > smoothZ then 1 else -1
 		local stepSize = ConVars.sv_stepsize
 		smoothZ += dt * 150 * dir
@@ -297,7 +392,7 @@ local function render(dt: number)
 
 	local eye = Vector3.new(origin.X, smoothZ + viewOffset, origin.Z) / ups
 	camera.CameraType = Enum.CameraType.Scriptable
-	camera.FieldOfView = verticalFov(cl.fov)
+	camera.FieldOfView = verticalFov(fov_desired:GetFloat())
 	camera.CFrame = CFrame.new(eye) * CFrame.fromOrientation(math.rad(pitch + punchPitch), math.rad(yaw), 0)
 
 	-- body follows feet + view yaw
@@ -307,19 +402,7 @@ local function render(dt: number)
 		part.LocalTransparencyModifier = 1
 	end
 
-	-- HUD
-	hud.Enabled = cl.showhud
-	if cl.showhud then
-		local v = movement.velocity
-		speedLabel.Text = string.format("%d u/s", math.floor(math.sqrt(v.X * v.X + v.Z * v.Z) + 0.5))
-		infoLabel.Text = string.format(
-			"%s  %s  vz %d  %s",
-			if movement.noclip then "NOCLIP" elseif movement.onGround then "GROUND" else "AIR",
-			if movement.ducked then "DUCKED" elseif movement.duckAmount > 0 then "DUCKING" else "STAND",
-			math.floor(v.Y + 0.5),
-			if mouseLocked then "" else "[mouse free]"
-		)
-	end
+	updateHud(dt)
 end
 
 ------------------------------------------------------------------------
@@ -337,7 +420,7 @@ local function teardown()
 		movement = nil
 	end
 	table.clear(hiddenParts)
-	character, humanoid, root = nil, nil, nil
+	humanoid, root = nil, nil
 end
 
 local function onDied()
@@ -346,8 +429,7 @@ local function onDied()
 	if deadRoot then
 		deadRoot.Anchored = false
 	end
-	local camera = Workspace.CurrentCamera
-	camera.CameraType = Enum.CameraType.Custom
+	Workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	UserInputService.MouseIconEnabled = true
 end
@@ -365,7 +447,7 @@ local function onCharacterAdded(char: Model)
 		return
 	end
 
-	character, humanoid, root = char, hum, hrp
+	humanoid, root = hum, hrp
 
 	rootOffsetStuds = if hum.RigType == Enum.HumanoidRigType.R15 then hum.HipHeight + hrp.Size.Y / 2 else 3
 
@@ -384,7 +466,7 @@ local function onCharacterAdded(char: Model)
 
 	movement.OnLand = function(fallSpeed: number)
 		punchPitch = -math.min(fallSpeed / 100, 8)
-		if cl.falldamage and humanoid then
+		if sv_falldamage:GetBool() and humanoid then
 			local dmg = GameMovement.GetFallDamage(fallSpeed)
 			if dmg > 0 then
 				humanoid:TakeDamage(dmg)
@@ -398,13 +480,9 @@ local function onCharacterAdded(char: Model)
 	yaw = math.deg(ry)
 	pitch = 0
 	punchPitch = 0
-	accumulator = 0
 
 	movement:Teleport(feet * ups + Vector3.new(0, 1, 0))
-	prevOrigin, currOrigin = movement.origin, movement.origin
-	prevView, currView = movement.viewOffset, movement.viewOffset
-	smoothZ = movement.origin.Y
-	smoothViewOffset = movement.viewOffset
+	snapInterpolation()
 
 	cacheHiddenParts(char)
 	table.insert(connections, char.DescendantAdded:Connect(function(d)
@@ -418,23 +496,72 @@ local function onCharacterAdded(char: Model)
 end
 
 ------------------------------------------------------------------------
+-- Commands
+------------------------------------------------------------------------
+
+Cvar.ConCommand("noclip", function()
+	if not movement then
+		return
+	end
+	movement:SetNoclip(not movement.noclip)
+	snapInterpolation()
+	Cvar.Msg(if movement.noclip then "noclip ON" else "noclip OFF")
+end, "Toggle. Player becomes non-solid and flies.", CHEAT)
+
+Cvar.ConCommand("kill", function()
+	if humanoid then
+		humanoid.Health = 0
+	end
+end, "Kills the player with generic damage")
+
+Cvar.ConCommand("getpos", function()
+	if not movement then
+		return
+	end
+	local o = movement.origin
+	Cvar.Msg(string.format("setpos %.6f %.6f %.6f;setang %.6f %.6f %.6f", o.X, o.Y, o.Z, pitch, yaw, 0))
+end, "dump position and angles to the console")
+
+Cvar.ConCommand("setpos", function(args)
+	if not movement then
+		return
+	end
+	if args:ArgC() < 3 then
+		Cvar.Msg("Usage:  setpos x y <z optional>")
+		return
+	end
+	local o = movement.origin
+	local x = tonumber(args:Arg(1)) or o.X
+	local y = tonumber(args:Arg(2)) or o.Y
+	local z = if args:ArgC() >= 4 then tonumber(args:Arg(3)) or o.Z else o.Z
+	if movement.noclip then
+		movement.origin = Vector3.new(x, y, z)
+		movement.velocity = Vector3.zero
+	else
+		movement:Teleport(Vector3.new(x, y, z))
+	end
+	snapInterpolation()
+end, "Move player to specified origin (must have sv_cheats).", CHEAT)
+
+Cvar.ConCommand("setang", function(args)
+	if args:ArgC() < 3 then
+		Cvar.Msg("Usage:  setang pitch yaw <roll optional>")
+		return
+	end
+	pitch = math.clamp(tonumber(args:Arg(1)) or pitch, -89, 89)
+	yaw = tonumber(args:Arg(2)) or yaw
+end, "Snap player eyes to specified pitch yaw <roll:optional> (must have sv_cheats).", CHEAT)
+
+------------------------------------------------------------------------
 -- Input
 ------------------------------------------------------------------------
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed or UserInputService:GetFocusedTextBox() then
+	if gameProcessed or inputBlocked() then
 		return
 	end
-	local key = input.KeyCode
-	if table.find(Binds.jump, key) then
+	if table.find(KEYS_JUMP, input.KeyCode) then
 		jumpQueued = true
-	elseif key == Binds.noclip then
-		if movement then
-			movement:SetNoclip(not movement.noclip)
-			prevOrigin, currOrigin = movement.origin, movement.origin
-		end
-	elseif key == Binds.togglemouse then
-		mouseLocked = not mouseLocked
 	end
 end)
 

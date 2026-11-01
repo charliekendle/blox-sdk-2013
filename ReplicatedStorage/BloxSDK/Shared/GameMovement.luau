@@ -43,6 +43,41 @@ GameMovement.ConVars = {
 }
 local ConVars = GameMovement.ConVars
 
+-- Register the movement settings as console convars. ConVars stays a plain table
+-- for fast reads every tick; the change callbacks keep it in sync.
+do
+	local Cvar = require(script.Parent:WaitForChild("ConVar"))
+	local NR = Cvar.FCVAR_NOTIFY + Cvar.FCVAR_REPLICATED
+
+	local defs = {
+		{ "sv_gravity", "sv_gravity", NR, "World gravity." },
+		{ "sv_maxspeed", "sv_maxspeed", NR, "Maximum speed a player can move.", 0 },
+		{ "sv_accelerate", "sv_accelerate", NR, "Linear acceleration amount." },
+		{ "sv_airaccelerate", "sv_airaccelerate", NR, "Air acceleration amount." },
+		{ "sv_friction", "sv_friction", NR, "World friction." },
+		{ "sv_stopspeed", "sv_stopspeed", NR, "Minimum stopping speed when on ground.", 0 },
+		{ "sv_stepsize", "sv_stepsize", NR, "Maximum step height.", 0 },
+		{ "sv_bounce", "sv_bounce", NR, "Bounce multiplier for when the player hits a wall in the air.", 0 },
+		{ "sv_maxvelocity", "sv_maxvelocity", Cvar.FCVAR_REPLICATED, "Maximum speed any ballistically moving object is allowed to attain per axis.", 0 },
+		{ "sv_noclipspeed", "sv_noclipspeed", NR, "Noclip speed multiplier.", 0 },
+		{ "sv_noclipaccelerate", "sv_noclipaccelerate", NR, "Noclip acceleration.", 0 },
+		{ "sv_autobunnyhopping", "sv_autobunnyhopping", NR, "Players automatically re-jump while holding jump.", 0, 1 },
+		{ "hl2_jumpboost", "hl2_jumpboost", NR, "HL2 singleplayer forward jump boost (enables ABH).", 0, 1 },
+		{ "bsdk_units_per_stud", "units_per_stud", Cvar.FCVAR_REPLICATED, "Source units per Roblox stud.", 1, 100 },
+	}
+
+	for _, def in defs do
+		local cvarName, key, flags, help, min, max = def[1], def[2], def[3], def[4], def[5], def[6]
+		local isBool = type(ConVars[key]) == "boolean"
+		local var = Cvar.ConVar(cvarName, ConVars[key], flags, help, min, max)
+		local function sync()
+			ConVars[key] = if isBool then var:GetBool() else var:GetFloat()
+		end
+		var:AddChangeCallback(sync)
+		sync()
+	end
+end
+
 -- Hulls (Roblox axes, feet at origin)
 local VEC_HULL_MIN = Vector3.new(-16, 0, -16)
 local VEC_HULL_MAX = Vector3.new(16, 72, 16)
