@@ -14,24 +14,36 @@
 	  Alt         walk (+walk, 150)
 	  `           console (DevConsole) - V/M are console binds: noclip, toggle cl_mouselock
 
+	  E           +use (console bind)
+
 	Console:
 	  convars  sensitivity, m_yaw, m_pitch, fov_desired, cl_forwardspeed, cl_sidespeed, cl_upspeed,
 	           hl2_normspeed, hl2_sprintspeed, hl2_walkspeed, smoothstairs, sv_falldamage,
 	           cl_mouselock, cl_drawhud, cl_showspeed, cl_showpos, cl_showfps
-	  commands noclip, kill, getpos, setpos, setang
+	  commands noclip, kill, getpos, setpos, setang, +use/-use
 	  Positions are Source units on Roblox axes (Y up).
+
+	Server link: reports the hull every other tick (PlayerState), applies MovementEffect
+	(teleport / push / impulse) and shows game_text (EntityMessage).
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("BloxSDK"):WaitForChild("Shared")
 local Cvar = require(Shared:WaitForChild("ConVar"))
 local GameMovement = require(Shared:WaitForChild("GameMovement"))
+local Net = require(Shared:WaitForChild("Net"))
 local ConVars = GameMovement.ConVars
+
+local PlayerStateRemote = Net.Get("PlayerState")
+local MovementEffectRemote = Net.Get("MovementEffect")
+local UseRemote = Net.Get("Use")
+local EntityMessageRemote = Net.Get("EntityMessage")
 
 local player = Players.LocalPlayer
 
@@ -85,6 +97,12 @@ local fpsSmoothed = 60
 
 local smoothZ = 0
 local smoothViewOffset = GameMovement.VEC_VIEW
+
+-- server link
+local teleportSeq = 0
+local pushes: { [number]: Vector3 } = {}
+local tickCount = 0
+local STATE_SEND_EVERY = 2
 
 local KEYS_FORWARD = { Enum.KeyCode.W }
 local KEYS_BACK = { Enum.KeyCode.S }
@@ -266,13 +284,46 @@ end
 -- Simulation + render
 ------------------------------------------------------------------------
 
+local function totalPush(): Vector3
+	local sum = Vector3.zero
+	for _, v in pushes do
+		sum += v
+	end
+	return sum
+end
+
+local function sendState()
+	PlayerStateRemote:FireServer(
+		movement.origin,
+		movement.velocity,
+		movement.ducked,
+		movement.onGround,
+		pitch,
+		yaw,
+		teleportSeq
+	)
+end
+
 local function runTick()
 	local cmd = buildCmd()
 
 	prevOrigin = currOrigin
 	prevView = currView
 
+	-- trigger_push: base velocity is re-applied every tick while touching (FL_BASEVELOCITY)
+	local push = totalPush()
+	movement.baseVelocity = push
+	if push.Y > 0 and movement.onGround and not movement.noclip then
+		movement:SetGroundEntity(nil)
+		movement.origin += Vector3.new(0, 1, 0)
+	end
+
 	movement:ProcessMovement(cmd, TICK_INTERVAL)
+
+	tickCount += 1
+	if tickCount % STATE_SEND_EVERY == 0 then
+		sendState()
+	end
 
 	if movement.carryYaw ~= 0 then
 		yaw += movement.carryYaw
@@ -301,10 +352,15 @@ local function updateHud(dt: number)
 	if showSpeed then
 		speedLabel.Text = string.format("%d u/s", math.floor(math.sqrt(v.X * v.X + v.Z * v.Z) + 0.5))
 		infoLabel.Text = string.format(
-			"%s  %s  vz %d",
-			if movement.noclip then "NOCLIP" elseif movement.onGround then "GROUND" else "AIR",
+			"%s  %s  vz %d%s",
+			if movement.noclip then "NOCLIP"
+				elseif movement.onLadder then "LADDER"
+				elseif movement.waterLevel >= GameMovement.WL_Waist then "SWIM"
+				elseif movement.onGround then "GROUND"
+				else "AIR",
 			if movement.ducked then "DUCKED" elseif movement.duckAmount > 0 then "DUCKING" else "STAND",
-			math.floor(v.Y + 0.5)
+			math.floor(v.Y + 0.5),
+			if movement.waterLevel > 0 then string.format("  water %d", movement.waterLevel) else ""
 		)
 	end
 
@@ -420,6 +476,7 @@ local function teardown()
 		movement = nil
 	end
 	table.clear(hiddenParts)
+	table.clear(pushes)
 	humanoid, root = nil, nil
 end
 
@@ -508,6 +565,19 @@ Cvar.ConCommand("noclip", function()
 	Cvar.Msg(if movement.noclip then "noclip ON" else "noclip OFF")
 end, "Toggle. Player becomes non-solid and flies.", CHEAT)
 
+-- +use: ask the server what's under the crosshair
+Cvar.ConCommand("+use", function()
+	if not movement or inputBlocked() then
+		return
+	end
+	local ups = ConVars.units_per_stud
+	local eye = (movement.origin + Vector3.new(0, movement.viewOffset, 0)) / ups
+	local dir = CFrame.fromOrientation(math.rad(pitch), math.rad(yaw), 0).LookVector
+	UseRemote:FireServer(eye, dir)
+end, "Use the thing you're looking at")
+
+Cvar.ConCommand("-use", function() end, "")
+
 Cvar.ConCommand("kill", function()
 	if humanoid then
 		humanoid.Health = 0
@@ -541,6 +611,7 @@ Cvar.ConCommand("setpos", function(args)
 		movement:Teleport(Vector3.new(x, y, z))
 	end
 	snapInterpolation()
+	sendState()
 end, "Move player to specified origin (must have sv_cheats).", CHEAT)
 
 Cvar.ConCommand("setang", function(args)
@@ -562,6 +633,116 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 	if table.find(KEYS_JUMP, input.KeyCode) then
 		jumpQueued = true
+	end
+end)
+
+------------------------------------------------------------------------
+-- Server -> client movement effects
+------------------------------------------------------------------------
+
+MovementEffectRemote.OnClientEvent:Connect(function(kind: string, data: any)
+	if type(data) ~= "table" then
+		return
+	end
+
+	if kind == "teleport" then
+		if type(data.seq) == "number" then
+			teleportSeq = math.max(teleportSeq, data.seq)
+		end
+		if movement then
+			if typeof(data.origin) == "Vector3" then
+				local keepVelocity = movement.velocity
+				movement:Teleport(data.origin, if typeof(data.velocity) == "Vector3" then data.velocity else keepVelocity)
+			elseif typeof(data.velocity) == "Vector3" then
+				movement.velocity = data.velocity
+			end
+			if type(data.yaw) == "number" then
+				yaw = data.yaw
+			end
+			snapInterpolation()
+			-- ack straight away so the server stops ignoring our state
+			sendState()
+		end
+	elseif kind == "push" then
+		if type(data.id) == "number" then
+			pushes[data.id] = if typeof(data.velocity) == "Vector3" then data.velocity else nil
+		end
+	elseif kind == "clearpush" then
+		table.clear(pushes)
+	elseif kind == "impulse" then
+		if movement and typeof(data.velocity) == "Vector3" then
+			movement.velocity += data.velocity
+			if data.velocity.Y > 0 and movement.onGround then
+				movement:SetGroundEntity(nil)
+				movement.origin += Vector3.new(0, 1, 0)
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------------------
+-- game_text / point_clientcommand
+------------------------------------------------------------------------
+
+local textGui = Instance.new("ScreenGui")
+textGui.Name = "BloxSDK_GameText"
+textGui.ResetOnSpawn = false
+textGui.IgnoreGuiInset = true
+textGui.DisplayOrder = 20
+textGui.Parent = player:WaitForChild("PlayerGui")
+
+local textChannels: { [number]: { label: TextLabel, token: number } } = {}
+
+local function showGameText(msg: any)
+	local channel = math.clamp(tonumber(msg.channel) or 1, 1, 6)
+	local slot = textChannels[channel]
+	if not slot then
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.SourceSansBold
+		label.TextSize = 28
+		label.TextStrokeTransparency = 0.6
+		label.TextWrapped = true
+		label.AutomaticSize = Enum.AutomaticSize.XY
+		label.Size = UDim2.fromOffset(0, 0)
+		label.Parent = textGui
+		slot = { label = label, token = 0 }
+		textChannels[channel] = slot
+	end
+
+	slot.token += 1
+	local token = slot.token
+	local label = slot.label
+
+	local x = tonumber(msg.x) or -1
+	local y = tonumber(msg.y) or -1
+	label.AnchorPoint = Vector2.new(if x < 0 then 0.5 else 0, if y < 0 then 0.5 else 0)
+	label.Position = UDim2.fromScale(if x < 0 then 0.5 else x, if y < 0 then 0.5 else y)
+	label.Text = tostring(msg.message or "")
+	label.TextColor3 = if typeof(msg.color) == "Color3" then msg.color else Color3.new(1, 1, 1)
+	label.TextTransparency = 1
+	label.TextStrokeTransparency = 1
+
+	local fadein = math.max(tonumber(msg.fadein) or 0, 0)
+	local hold = math.max(tonumber(msg.holdtime) or 1, 0)
+	local fadeout = math.max(tonumber(msg.fadeout) or 0, 0)
+
+	TweenService:Create(label, TweenInfo.new(fadein), { TextTransparency = 0, TextStrokeTransparency = 0.6 }):Play()
+	task.delay(fadein + hold, function()
+		if slot.token == token then
+			TweenService:Create(label, TweenInfo.new(fadeout), { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		end
+	end)
+end
+
+EntityMessageRemote.OnClientEvent:Connect(function(kind: string, data: any)
+	if type(data) ~= "table" then
+		return
+	end
+	if kind == "gametext" then
+		showGameText(data)
+	elseif kind == "command" and type(data.text) == "string" then
+		Cvar.Execute(data.text)
 	end
 end)
 

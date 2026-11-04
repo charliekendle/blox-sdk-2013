@@ -556,6 +556,7 @@ end
 setBind("`", "toggleconsole")
 setBind("v", "noclip")
 setBind("m", "toggle cl_mouselock")
+setBind("e", "+use")
 
 -- The console key is checked by physical key AND by the character it types, so it
 -- works on UK/ISO layouts, and it ignores gameProcessed so CoreGui can't swallow it.
@@ -689,6 +690,60 @@ Cvar.ConCommand("key_listboundkeys", function()
 		Cvar.Msg(string.format('"%s" = "%s"', key, binds[key]))
 	end
 end, "List bound keys with bindings.")
+
+------------------------------------------------------------------------
+-- Server link: replicated convars, forwarded commands, server output
+------------------------------------------------------------------------
+
+task.spawn(function()
+	local BloxSDK = ReplicatedStorage:WaitForChild("BloxSDK")
+	local Net = require(BloxSDK:WaitForChild("Shared"):WaitForChild("Net"))
+
+	local serverCommand = Net.Get("ServerCommand")
+	Cvar.SetForwarder(function(text: string)
+		serverCommand:FireServer(text)
+	end)
+
+	Net.Get("ConsolePrint").OnClientEvent:Connect(function(text, color)
+		if type(text) == "string" then
+			Cvar.ConColorMsg(if typeof(color) == "Color3" then color else Cvar.COLOR_NORMAL, text)
+		end
+	end)
+
+	local folder = BloxSDK:WaitForChild("ReplicatedConVars", 30)
+	if not folder then
+		Cvar.Warning("No ReplicatedConVars from the server - is ServerScriptService.BloxSDKServer installed?")
+		return
+	end
+
+	-- FCVAR_REPLICATED values
+	for name, value in folder:GetAttributes() do
+		Cvar.SetReplicatedValue(name, tostring(value))
+	end
+	folder.AttributeChanged:Connect(function(name)
+		local value = folder:GetAttribute(name)
+		if value ~= nil then
+			Cvar.SetReplicatedValue(name, tostring(value))
+		end
+	end)
+
+	-- server commands -> local proxies (autocomplete + forwarding)
+	local commands = folder:WaitForChild("Commands") :: StringValue
+	local proxies: { [string]: boolean } = {}
+	local function syncCommands()
+		for line in (commands.Value .. "\n"):gmatch("(.-)\n") do
+			local name, flags, help = line:match("^([^\t]+)\t(%d+)\t(.*)$")
+			if name and not Cvar.Find(name) and not proxies[name] then
+				proxies[name] = true
+				Cvar.ConCommand(name, function(args)
+					serverCommand:FireServer(args:GetCommandString())
+				end, help, tonumber(flags) or 0)
+			end
+		end
+	end
+	syncCommands()
+	commands:GetPropertyChangedSignal("Value"):Connect(syncCommands)
+end)
 
 Cvar.Msg("BloxSDK console. Type 'cvarlist' or 'find <text>' to see what's available.")
 print("[BloxSDK] DevConsole loaded - press ` or F2")

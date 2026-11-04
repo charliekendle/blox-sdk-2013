@@ -15,11 +15,19 @@
 	Ported:   FullWalkMove, WalkMove, AirMove, StepMove, TryPlayerMove, ClipVelocity,
 	          Accelerate, AirAccelerate, Friction, CheckJumpButton (+HL2 boost),
 	          Start/FinishGravity, CategorizePosition, StayOnGround, CheckVelocity,
-	          CheckFalling, Duck (incl. in-air duck), CanUnDuck, CheckStuck, FullNoClipMove.
-	Not yet:  water, ladders, TryTouchGroundInQuadrants.
+	          CheckFalling, Duck (incl. in-air duck), CanUnDuck, CheckStuck, FullNoClipMove,
+	          CheckWater, WaterMove, CheckWaterJump, WaterJump, LadderMove, FullLadderMove,
+	          base velocity (trigger_push / conveyors).
+	Not yet:  TryTouchGroundInQuadrants, water currents.
 	Extra:    moving-platform carry (Roblox has no ground-entity parenting).
+
+	Water:    terrain water, or parts with Attribute classname = "func_water" (or tag func_water).
+	Ladders:  parts with Attribute classname = "func_ladder" (or tag func_ladder). Keep them CanCollide.
+	          A Model with the attribute makes all its parts count.
 ]]
 
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local GameMovement = {}
@@ -118,6 +126,90 @@ local FRICTION_REFERENCE = 0.2 -- Roblox friction at/above this = full Source fr
 
 local ZERO = Vector3.zero
 local UP = Vector3.yAxis
+
+-- water / ladders
+local WL_NotInWater = 0
+local WL_Feet = 1
+local WL_Waist = 2
+local WL_Eyes = 3
+local WATERJUMP_HEIGHT = 8
+local MAX_CLIMB_SPEED = 200
+local LADDER_DISTANCE = 2
+
+GameMovement.WL_NotInWater = WL_NotInWater
+GameMovement.WL_Feet = WL_Feet
+GameMovement.WL_Waist = WL_Waist
+GameMovement.WL_Eyes = WL_Eyes
+
+------------------------------------------------------------------------
+-- Brush volumes (func_water / func_ladder), tracked on the client
+------------------------------------------------------------------------
+
+local waterParts: { [BasePart]: boolean } = {}
+local ladderParts: { [BasePart]: boolean } = {}
+local volumesStarted = false
+
+local function brushClassOf(part: BasePart): string?
+	if CollectionService:HasTag(part, "func_water") then
+		return "func_water"
+	elseif CollectionService:HasTag(part, "func_ladder") then
+		return "func_ladder"
+	end
+	local cls = part:GetAttribute("classname")
+	if cls == nil and part.Parent and part.Parent:IsA("Model") then
+		cls = part.Parent:GetAttribute("classname")
+	end
+	if type(cls) == "string" then
+		cls = string.lower(cls)
+		if cls == "func_water" or cls == "func_ladder" then
+			return cls
+		end
+	end
+	return nil
+end
+
+local function trackVolume(inst: Instance)
+	if not inst:IsA("BasePart") then
+		return
+	end
+	local cls = brushClassOf(inst)
+	if cls == "func_water" then
+		waterParts[inst] = true
+		if RunService:IsClient() then
+			inst.CanCollide = false
+		end
+	elseif cls == "func_ladder" then
+		ladderParts[inst] = true
+	end
+end
+
+local function untrackVolume(inst: Instance)
+	if inst:IsA("BasePart") then
+		waterParts[inst] = nil
+		ladderParts[inst] = nil
+	end
+end
+
+local function startVolumeTracking()
+	if volumesStarted then
+		return
+	end
+	volumesStarted = true
+	for _, d in Workspace:GetDescendants() do
+		trackVolume(d)
+	end
+	Workspace.DescendantAdded:Connect(trackVolume)
+	Workspace.DescendantRemoving:Connect(untrackVolume)
+	for _, tag in { "func_water", "func_ladder" } do
+		CollectionService:GetInstanceAddedSignal(tag):Connect(trackVolume)
+	end
+end
+
+local function isLadderInstance(inst: Instance?): boolean
+	return inst ~= nil and inst:IsA("BasePart") and ladderParts[inst :: BasePart] == true
+end
+
+GameMovement.IsLadderPart = isLadderInstance
 
 -- Offsets tried by CheckStuck, nearest first (like Source's rgv3tStuckTable)
 local STUCK_OFFSETS = {}
@@ -234,6 +326,19 @@ function GameMovement.new(ignore: { Instance }?)
 
 	self.stuckCooldown = 0
 
+	-- base velocity (trigger_push etc.), set by the owner every tick
+	self.baseVelocity = ZERO
+
+	-- water
+	self.waterLevel = WL_NotInWater
+	self.waterJumpTime = 0
+	self.waterJumpVel = ZERO
+	self.waterEntryTime = 0
+
+	-- ladders
+	self.onLadder = false
+	self.ladderNormal = ZERO
+
 	-- callbacks
 	self.OnLand = nil :: ((fallSpeed: number) -> ())?
 	self.OnJump = nil :: (() -> ())?
@@ -258,6 +363,7 @@ function GameMovement.new(ignore: { Instance }?)
 	self.probe = probe
 
 	self:SetIgnoreList(ignore or {})
+	startVolumeTracking()
 	return self
 end
 
@@ -282,10 +388,12 @@ function GameMovement:GetHull(): (Vector3, Vector3)
 	return VEC_HULL_MIN, VEC_HULL_MAX
 end
 
-function GameMovement:Teleport(origin: Vector3)
+function GameMovement:Teleport(origin: Vector3, velocity: Vector3?)
 	self.origin = origin
-	self.velocity = ZERO
+	self.velocity = velocity or ZERO
 	self.fallVelocity = 0
+	self.waterJumpTime = 0
+	self.onLadder = false
 	self.carryPart = nil
 	self.carryCFrame = nil
 	self.platformVelocity = ZERO
@@ -300,6 +408,8 @@ function GameMovement:SetNoclip(enabled: boolean)
 		return
 	end
 	self.noclip = enabled
+	self.onLadder = false
+	self.waterJumpTime = 0
 	self.ducked = false
 	self.duckAmount = 0
 	self.viewOffset = VEC_VIEW
@@ -397,7 +507,18 @@ function GameMovement:ProcessMovement(cmd: MoveCmd, dt: number)
 	end
 
 	self:Duck()
-	self:FullWalkMove()
+
+	-- Don't run ladder code if dead or on a train
+	if not self:LadderMove() and self.onLadder then
+		-- Clear ladder stuff; it will be reset immediately next frame if necessary
+		self.onLadder = false
+	end
+
+	if self.onLadder then
+		self:FullLadderMove()
+	else
+		self:FullWalkMove()
+	end
 end
 
 function GameMovement:CheckParameters()
@@ -425,37 +546,82 @@ end
 ------------------------------------------------------------------------
 
 function GameMovement:FullWalkMove()
-	self:StartGravity()
+	if not self:CheckWater() then
+		self:StartGravity()
+	end
 
-	if self.cmd.jump then
-		self:CheckJumpButton()
+	-- If we are leaping out of the water, just update the counters.
+	if self.waterJumpTime > 0 then
+		self:WaterJump()
+		self:TryPlayerMove()
+		self:CheckWater()
+		return
+	end
+
+	-- If we are swimming in the water, see if we are nudging against a place we can jump up out
+	--  of, and, if so, start out jump.  Otherwise, if we are not moving up, then reset jump timer to 0
+	if self.waterLevel >= WL_Waist then
+		if self.waterLevel == WL_Waist then
+			self:CheckWaterJump()
+		end
+
+		-- If we are falling again, then we must not trying to jump out of water any more.
+		if self.velocity.Y < 0 and self.waterJumpTime > 0 then
+			self.waterJumpTime = 0
+		end
+
+		-- Was jump button pressed?
+		if self.cmd.jump then
+			self:CheckJumpButton()
+		else
+			self.oldJump = false
+		end
+
+		-- Perform regular water movement
+		self:WaterMove()
+
+		-- Redetermine position vars
+		self:CategorizePosition()
+
+		-- If we are on ground, no downward velocity.
+		if self.onGround then
+			self.velocity = SetY(self.velocity, 0)
+		end
 	else
-		self.oldJump = false
+		if self.cmd.jump then
+			self:CheckJumpButton()
+		else
+			self.oldJump = false
+		end
+
+		-- Friction is handled before we add in any base velocity. That way, if we are on a conveyor,
+		--  we don't slow when standing still, relative to the conveyor.
+		if self.onGround then
+			self.velocity = SetY(self.velocity, 0)
+			self:Friction()
+		end
+
+		self:CheckVelocity()
+
+		if self.onGround then
+			self:WalkMove()
+		else
+			self:AirMove()
+		end
+
+		self:CategorizePosition()
+		self:CheckVelocity()
+
+		if not self:CheckWater() then
+			self:FinishGravity()
+		end
+
+		if self.onGround then
+			self.velocity = SetY(self.velocity, 0)
+		end
+
+		self:CheckFalling()
 	end
-
-	-- Friction is handled before we add in any base velocity.
-	if self.onGround then
-		self.velocity = SetY(self.velocity, 0)
-		self:Friction()
-	end
-
-	self:CheckVelocity()
-
-	if self.onGround then
-		self:WalkMove()
-	else
-		self:AirMove()
-	end
-
-	self:CategorizePosition()
-	self:CheckVelocity()
-	self:FinishGravity()
-
-	if self.onGround then
-		self.velocity = SetY(self.velocity, 0)
-	end
-
-	self:CheckFalling()
 end
 
 function GameMovement:WalkMove()
@@ -472,23 +638,33 @@ function GameMovement:WalkMove()
 	self:Accelerate(wishdir, wishspeed, ConVars.sv_accelerate)
 	self.velocity = SetY(self.velocity, 0)
 
+	-- Add in any base velocity to the current velocity.
+	self.velocity += self.baseVelocity
+
 	local spd = self.velocity.Magnitude
 	if spd < 1 then
 		self.velocity = ZERO
+		-- Now pull the base velocity back out.
+		self.velocity -= self.baseVelocity
 		return
 	end
 
 	local mins, maxs = self:GetHull()
 	local dest = self.origin + self.velocity * self.frametime
+	dest = SetY(dest, self.origin.Y)
 	local trace = self:TraceHull(self.origin, dest, mins, maxs)
 
 	if trace.fraction == 1 then
 		self.origin = trace.endpos
+		self.velocity -= self.baseVelocity
 		self:StayOnGround()
 		return
 	end
 
 	self:StepMove()
+
+	-- Now pull the base velocity back out.
+	self.velocity -= self.baseVelocity
 	self:StayOnGround()
 end
 
@@ -572,7 +748,12 @@ function GameMovement:AirMove()
 	end
 
 	self:AirAccelerate(wishdir, wishspeed, ConVars.sv_airaccelerate)
+
+	-- Add in any base velocity to the current velocity.
+	self.velocity += self.baseVelocity
 	self:TryPlayerMove()
+	-- Now pull the base velocity back out.
+	self.velocity -= self.baseVelocity
 end
 
 ------------------------------------------------------------------------
@@ -753,11 +934,19 @@ end
 
 function GameMovement:StartGravity()
 	local v = self.velocity
-	self.velocity = SetY(v, v.Y - ConVars.sv_gravity * 0.5 * self.frametime)
+	-- Add gravity so they'll be in the correct position during movement
+	-- yes, this 0.5 looks wrong, but it's not.
+	local y = v.Y - ConVars.sv_gravity * 0.5 * self.frametime
+	y += self.baseVelocity.Y * self.frametime
+	self.velocity = SetY(v, y)
+	self.baseVelocity = SetY(self.baseVelocity, 0)
 	self:CheckVelocity()
 end
 
 function GameMovement:FinishGravity()
+	if self.waterJumpTime > 0 then
+		return
+	end
 	local v = self.velocity
 	self.velocity = SetY(v, v.Y - ConVars.sv_gravity * 0.5 * self.frametime)
 	self:CheckVelocity()
@@ -782,6 +971,20 @@ end
 ------------------------------------------------------------------------
 
 function GameMovement:CheckJumpButton(): boolean
+	-- See if we are waterjumping.  If so, decrement count and return.
+	if self.waterJumpTime > 0 then
+		self.waterJumpTime = math.max(self.waterJumpTime - self.frametime, 0)
+		return false
+	end
+
+	-- If we are in the water most of the way...
+	if self.waterLevel >= WL_Waist then
+		-- swimming, not jumping
+		self:SetGroundEntity(nil)
+		self.velocity = SetY(self.velocity, 100)
+		return false
+	end
+
 	-- No more effect
 	if not self.onGround then
 		self.oldJump = true
@@ -1053,6 +1256,328 @@ function GameMovement:CheckStuck(): boolean
 	-- couldn't find a way out; let traces carry us (shapecasts ignore starting overlap)
 	self.stuckCooldown = STUCK_RETRY_DELAY
 	return true
+end
+
+------------------------------------------------------------------------
+-- Water
+------------------------------------------------------------------------
+
+local terrain = Workspace.Terrain
+
+-- point in Source units
+function GameMovement:PointInWater(point: Vector3): boolean
+	local p = point / ConVars.units_per_stud
+
+	for part in waterParts do
+		if part.Parent then
+			local lp = part.CFrame:PointToObjectSpace(p)
+			local h = part.Size / 2
+			if math.abs(lp.X) <= h.X and math.abs(lp.Y) <= h.Y and math.abs(lp.Z) <= h.Z then
+				return true
+			end
+		else
+			waterParts[part] = nil
+		end
+	end
+
+	-- terrain water: one 4x4x4 voxel, surface height from occupancy
+	local vx, vy, vz = math.floor(p.X / 4) * 4, math.floor(p.Y / 4) * 4, math.floor(p.Z / 4) * 4
+	local corner = Vector3.new(vx, vy, vz)
+	local ok, materials, occupancies = pcall(function()
+		return terrain:ReadVoxels(Region3.new(corner, corner + Vector3.new(4, 4, 4)), 4)
+	end)
+	if ok and materials and materials.Size.X >= 1 then
+		if materials[1][1][1] == Enum.Material.Water then
+			local surface = vy + occupancies[1][1][1] * 4
+			return p.Y <= surface
+		end
+	end
+	return false
+end
+
+function GameMovement:CheckWater(): boolean
+	local mins, maxs = self:GetHull()
+	local point = Vector3.new(
+		self.origin.X + (mins.X + maxs.X) * 0.5,
+		self.origin.Y + mins.Y + 1,
+		self.origin.Z + (mins.Z + maxs.Z) * 0.5
+	)
+
+	local oldLevel = self.waterLevel
+	self.waterLevel = WL_NotInWater
+
+	if self:PointInWater(point) then
+		self.waterLevel = WL_Feet
+
+		-- Now check a point that is at the player hull midpoint.
+		point = SetY(point, self.origin.Y + (mins.Y + maxs.Y) * 0.5)
+		if self:PointInWater(point) then
+			self.waterLevel = WL_Waist
+
+			-- Now check the eye position.
+			point = SetY(point, self.origin.Y + self.viewOffset)
+			if self:PointInWater(point) then
+				self.waterLevel = WL_Eyes
+			end
+		end
+	end
+
+	if oldLevel == WL_NotInWater and self.waterLevel ~= WL_NotInWater then
+		self.waterEntryTime = os.clock()
+	end
+
+	return self.waterLevel > WL_Feet
+end
+
+function GameMovement:CheckWaterJump()
+	-- Already water jumping.
+	if self.waterJumpTime > 0 then
+		return
+	end
+
+	-- Don't hop out if we just jumped in
+	if self.velocity.Y < -180 then
+		return
+	end
+
+	local forward = YawBasis(self.yaw)
+	local flatVelocity = Flat(self.velocity)
+	local curspeed = flatVelocity.Magnitude
+
+	-- Are we backing into water from steps or something?  If so, don't pop forward
+	if curspeed ~= 0 and flatVelocity:Dot(forward) < 0 then
+		return
+	end
+
+	local mins, maxs = self:GetHull()
+	local vecStart = self.origin + (mins + maxs) * 0.5
+	local vecEnd = vecStart + forward * 24
+
+	local trace = self:TraceHull(vecStart, vecEnd, mins, maxs)
+	if trace.fraction < 1 and trace.normal then -- solid at waist
+		vecStart = SetY(vecStart, self.origin.Y + self.viewOffset + WATERJUMP_HEIGHT)
+		vecEnd = vecStart + forward * 24
+		self.waterJumpVel = trace.normal * -50
+
+		trace = self:TraceHull(vecStart, vecEnd, mins, maxs)
+		if trace.fraction == 1 then -- open at eye level
+			-- Now trace down to see if we would actually land on a standable surface.
+			vecStart = vecEnd
+			vecEnd = vecStart - UP * 1024
+			trace = self:TraceHull(vecStart, vecEnd, mins, maxs)
+			if trace.fraction < 1 and trace.normal and trace.normal.Y >= MIN_GROUND_NORMAL then
+				self.velocity = SetY(self.velocity, 256) -- Push up
+				self.oldJump = true -- Don't jump again until released
+				self.waterJumpTime = 2 -- Do this for 2 seconds
+			end
+		end
+	end
+end
+
+function GameMovement:WaterJump()
+	if self.waterJumpTime > 10 then
+		self.waterJumpTime = 10
+	end
+
+	if self.waterJumpTime <= 0 then
+		return
+	end
+
+	self.waterJumpTime -= self.frametime
+	if self.waterJumpTime <= 0 or self.waterLevel == WL_NotInWater then
+		self.waterJumpTime = 0
+	end
+
+	self.velocity = Vector3.new(self.waterJumpVel.X, self.velocity.Y, self.waterJumpVel.Z)
+end
+
+function GameMovement:WaterMove()
+	local forward = CFrame.fromOrientation(math.rad(self.pitch), math.rad(self.yaw), 0).LookVector
+	local _, right = YawBasis(self.yaw)
+
+	-- user intentions
+	local wishvel = forward * self.fmove + right * self.smove
+
+	if self.cmd.jump then
+		-- if we have the jump key down, move us up as well
+		wishvel += UP * self.maxspeed
+	elseif self.fmove == 0 and self.smove == 0 and self.umove == 0 then
+		-- Sinking after no other movement occurs
+		wishvel -= UP * 60
+	else
+		-- Go straight up by upmove amount.
+		wishvel += UP * self.umove
+	end
+
+	local wishspeed = wishvel.Magnitude
+	local wishdir = if wishspeed > 0 then wishvel / wishspeed else ZERO
+
+	-- Cap speed.
+	if wishspeed > self.maxspeed then
+		wishspeed = self.maxspeed
+	end
+
+	-- Slow us down a bit.
+	wishspeed *= 0.8
+
+	-- Water friction
+	local speed = self.velocity.Magnitude
+	local newspeed = 0
+	if speed > 0 then
+		newspeed = speed - self.frametime * speed * ConVars.sv_friction * self.surfaceFriction
+		if newspeed < 0.1 then
+			newspeed = 0
+		end
+		self.velocity *= newspeed / speed
+	end
+
+	-- water acceleration
+	if wishspeed >= 0.1 then
+		local addspeed = wishspeed - newspeed
+		if addspeed > 0 then
+			local accelspeed = ConVars.sv_accelerate * wishspeed * self.frametime * self.surfaceFriction
+			if accelspeed > addspeed then
+				accelspeed = addspeed
+			end
+			self.velocity += wishdir * accelspeed
+		end
+	end
+
+	self.velocity += self.baseVelocity
+
+	-- Now move
+	local mins, maxs = self:GetHull()
+	local dest = self.origin + self.velocity * self.frametime
+
+	local trace = self:TraceHull(self.origin, dest, mins, maxs)
+	if trace.fraction == 1 then
+		-- Source traces down from a step height above dest. Shapecasts can't report
+		-- startsolid, so find a safe start by tracing up from dest first.
+		local up = self:TraceHull(dest, dest + UP * (ConVars.sv_stepsize + 1), mins, maxs)
+		trace = self:TraceHull(up.endpos, dest, mins, maxs)
+		-- walked up the step, so just keep result and exit
+		self.origin = trace.endpos
+		self.velocity -= self.baseVelocity
+		return
+	end
+
+	if not self.onGround then
+		self:TryPlayerMove()
+		self.velocity -= self.baseVelocity
+		return
+	end
+
+	self:StepMove()
+	self.velocity -= self.baseVelocity
+end
+
+------------------------------------------------------------------------
+-- Ladders
+------------------------------------------------------------------------
+
+function GameMovement:LadderMove(): boolean
+	if self.noclip then
+		return false
+	end
+
+	local wishdir
+	if self.onLadder then
+		-- If I'm already moving on a ladder, use the previous ladder direction
+		wishdir = -self.ladderNormal
+	else
+		-- otherwise, use the direction player is attempting to move
+		if self.fmove ~= 0 or self.smove ~= 0 then
+			local forward = CFrame.fromOrientation(math.rad(self.pitch), math.rad(self.yaw), 0).LookVector
+			local _, right = YawBasis(self.yaw)
+			local dir = forward * self.fmove + right * self.smove
+			if dir.Magnitude < 1e-6 then
+				return false
+			end
+			wishdir = dir.Unit
+		else
+			-- Player is not attempting to move, no ladder behavior
+			return false
+		end
+	end
+
+	-- wishdir points toward the ladder if any exists
+	local mins, maxs = self:GetHull()
+	local trace = self:TraceHull(self.origin, self.origin + wishdir * LADDER_DISTANCE, mins, maxs)
+
+	-- no ladder in that direction, return
+	if trace.fraction == 1 or not trace.normal or not isLadderInstance(trace.instance) then
+		return false
+	end
+
+	local normal = trace.normal :: Vector3
+	self.onLadder = true
+	self.ladderNormal = normal
+
+	-- On ladder, convert movement to be relative to the ladder
+	local floorTrace = self:TraceHull(self.origin, self.origin - UP * 1, mins, maxs)
+	local onFloor = self.onGround or floorTrace.fraction < 1
+
+	local forward = CFrame.fromOrientation(math.rad(self.pitch), math.rad(self.yaw), 0).LookVector
+	local _, right = YawBasis(self.yaw)
+	local climbSpeed = MAX_CLIMB_SPEED
+
+	local forwardSpeed, rightSpeed = 0, 0
+	if self.fmove < 0 then forwardSpeed -= climbSpeed end
+	if self.fmove > 0 then forwardSpeed += climbSpeed end
+	if self.smove < 0 then rightSpeed -= climbSpeed end
+	if self.smove > 0 then rightSpeed += climbSpeed end
+
+	if self.cmd.jump then
+		self.onLadder = false
+		self.velocity = normal * 270
+	elseif forwardSpeed ~= 0 or rightSpeed ~= 0 then
+		-- Calculate player's intended velocity
+		local velocity = forward * forwardSpeed + right * rightSpeed
+
+		-- Perpendicular in the ladder plane
+		local perp = UP:Cross(normal)
+		perp = if perp.Magnitude > 1e-6 then perp.Unit else Vector3.xAxis
+
+		-- decompose velocity into ladder plane
+		local intoFace = velocity:Dot(normal)
+
+		-- This is the velocity into the face of the ladder
+		local cross = normal * intoFace
+
+		-- This is the player's additional velocity
+		local lateral = velocity - cross
+
+		-- This turns the velocity into the face of the ladder into velocity that
+		-- is roughly vertically perpendicular to the face of the ladder.
+		local tmp = normal:Cross(perp)
+		self.velocity = lateral + tmp * -intoFace
+
+		if onFloor and intoFace > 0 then -- On ground moving away from the ladder
+			self.velocity += normal * MAX_CLIMB_SPEED
+		end
+	else
+		self.velocity = ZERO
+	end
+
+	return true
+end
+
+function GameMovement:FullLadderMove()
+	self:CheckWater()
+
+	-- Was jump button pressed? If so, set velocity to 270 away from ladder.
+	if self.cmd.jump then
+		self:CheckJumpButton()
+	else
+		self.oldJump = false
+	end
+
+	-- Perform the move accounting for any base velocity.
+	self.velocity += self.baseVelocity
+	self:TryPlayerMove()
+	self.velocity -= self.baseVelocity
+
+	self:CategorizePosition()
 end
 
 ------------------------------------------------------------------------

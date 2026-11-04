@@ -131,9 +131,36 @@ end
 -- Registry
 ------------------------------------------------------------------------
 
+local RunService = game:GetService("RunService")
+local IS_CLIENT = RunService:IsClient()
+
 local registry: { [string]: any } = {}
 local aliases: { [string]: string } = {}
 local globalChangeCallbacks = {}
+local registerCallbacks = {}
+
+-- client: values pushed from the server for FCVAR_REPLICATED vars (applied on registration too)
+local replicatedValues: { [string]: string } = {}
+
+-- client: sends console text the client can't handle to the server (set by DevConsole)
+local forwarder: ((string) -> ())? = nil
+
+-- server: the player whose forwarded command is currently executing (nil = server console)
+Cvar.CommandPlayer = nil :: Player?
+
+function Cvar.SetForwarder(fn: ((string) -> ())?)
+	forwarder = fn
+end
+
+function Cvar.OnRegister(fn: (any) -> ())
+	table.insert(registerCallbacks, fn)
+end
+
+local function fireRegistered(base)
+	for _, fn in registerCallbacks do
+		task.spawn(fn, base)
+	end
+end
 
 local function formatNumber(n: number): string
 	if n == math.floor(n) and math.abs(n) < 1e15 then
@@ -198,6 +225,13 @@ function Cvar.ConVar(
 	end
 
 	registry[key] = self
+
+	local replicated = replicatedValues[key]
+	if replicated ~= nil and IS_CLIENT and hasFlag(self.flags, Cvar.FCVAR_REPLICATED) then
+		self:SetValue(replicated, true)
+	end
+
+	fireRegistered(self)
 	return self
 end
 
@@ -249,7 +283,7 @@ function ConVarClass:AddChangeCallback(fn: (any, string, number) -> ())
 	table.insert(self.callbacks, fn)
 end
 
-function ConVarClass:SetValue(value: any)
+function ConVarClass:SetValue(value: any, silent: boolean?)
 	local s = toValueString(value)
 	local f = tonumber(s)
 
@@ -276,7 +310,7 @@ function ConVarClass:SetValue(value: any)
 	self.float = f or 0
 	self.int = math.floor(self.float)
 
-	if hasFlag(self.flags, Cvar.FCVAR_NOTIFY) then
+	if not silent and hasFlag(self.flags, Cvar.FCVAR_NOTIFY) then
 		Cvar.Msg(string.format("Server cvar \"%s\" changed to %s", self.name, s))
 	end
 
@@ -420,7 +454,18 @@ function Cvar.ConCommand(
 		completion = completion,
 	}, ConCommandClass)
 	registry[key] = self
+	fireRegistered(self)
 	return self
+end
+
+-- client: apply a value the server replicated (FCVAR_REPLICATED)
+function Cvar.SetReplicatedValue(name: string, value: string)
+	local key = string.lower(name)
+	replicatedValues[key] = value
+	local var = registry[key]
+	if var and not var.isCommand then
+		var:SetValue(value, true)
+	end
 end
 
 function ConCommandClass:GetName(): string
@@ -536,7 +581,23 @@ function Cvar.Execute(text: string, depth: number?)
 		if alias and not base then
 			Cvar.Execute(alias, (depth :: number) + 1)
 		elseif not base then
-			Cvar.Msg(string.format('Unknown command "%s"', args:Arg(0)))
+			if IS_CLIENT and forwarder then
+				forwarder(statement)
+			else
+				Cvar.Msg(string.format('Unknown command "%s"', args:Arg(0)))
+			end
+		elseif
+			IS_CLIENT
+			and not base.isCommand
+			and args:ArgC() > 1
+			and hasFlag(base.flags, Cvar.FCVAR_REPLICATED)
+		then
+			-- replicated vars are owned by the server
+			if forwarder then
+				forwarder(statement)
+			else
+				Cvar.Msg(string.format("Can't change replicated ConVar %s from console of client, only server operator can change its value", base.name))
+			end
 		elseif base.isCommand then
 			if hasFlag(base.flags, Cvar.FCVAR_CHEAT) and not cheatsEnabled() then
 				Cvar.Msg(string.format("Can't use cheat command %s in multiplayer, unless the server has sv_cheats set to 1.", base.name))
@@ -634,6 +695,16 @@ Cvar.ConVar("sv_cheats", 1, FCVAR_NOTIFY_REPLICATED, "Allow cheats on server", 0
 		end
 	end
 end)
+
+Cvar.ConVar("developer", 0, 0, "Set developer message level (2 = print entity I/O)", 0, 2)
+
+-- Msg only when developer >= level (DevMsg)
+function Cvar.DevMsg(level: number, text: string)
+	local developer = registry["developer"]
+	if developer and developer:GetInt() >= level then
+		Cvar.ConColorMsg(Cvar.COLOR_HIGHLIGHT, text)
+	end
+end
 
 Cvar.ConCommand("help", function(args)
 	if args:ArgC() < 2 then
